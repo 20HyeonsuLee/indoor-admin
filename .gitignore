@@ -1,0 +1,33 @@
+# rtabmap 소스 트리 — repo 커밋 제외 (install_deps.sh로 재생성)
+Vendor/RTABMap/rtabmap-src/
+
+# Generated analysis artifacts
+graphify-out/
+
+# Xcode
+*.xcworkspace
+xcuserdata/
+*.xcuserstate
+DerivedData/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Build
+build/
+.build/
+
+# Swift Package Manager
+.swiftpm/
+
+# CocoaPods (미사용이지만 안전장치)
+Pods/
+Podfile.lock
+
+# macOS
+.DS_Store
+
+# YOLO 모델 파일 — 크기 10~30MB. 모델 교체 사이클 빠른 PoC 단계에서 LFS 오염 방지.
+# 사용자가 직접 드롭: IndoorPathfinding/Resources/Models/yolov8n-seg.mlmodelc
+IndoorPathfinding/Resources/Models/*.mlmodelc
+IndoorPathfinding/Resources/Models/*.mlpackage

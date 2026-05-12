@@ -1,0 +1,321 @@
+name: IndoorPathfinding
+options:
+  bundleIdPrefix: ac.koreatech
+  deploymentTarget:
+    iOS: "17.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+packages:
+  GRDB:
+    url: https://github.com/groue/GRDB.swift
+    from: 6.29.0
+  ZIPFoundation:
+    url: https://github.com/weichsel/ZIPFoundation
+    from: 0.9.19
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+    SUPPORTS_MACCATALYST: "NO"
+    SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+    TARGETED_DEVICE_FAMILY: "1"
+    ENABLE_BITCODE: "NO"
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  IndoorPathfinding:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: IndoorPathfinding
+        excludes:
+          - "Resources/Info.plist"
+      # Sprint 3.5: RTAB-Map C++ 브리지 소스 (iphoneos에서만 컴파일, simulator 제외)
+      # RTABMapApp.cpp + 의존 소스들(scene, graph_drawable 등) + tango-gl + NativeWrapper
+      - path: Vendor/RTABMap/Bridge
+        excludes:
+          - "IndoorPathfinding-Bridging-Header.h"
+          - "CMakeLists.txt"
+          - "resources/**"
+          - "tango-gl/include/**"
+          - "third-party/**"
+          - "jni_interface.cpp"
+          - "CameraARCore.cpp"
+          - "CameraARCore.h"
+          - "CameraAREngine.cpp"
+          - "CameraAREngine.h"
+          - "CameraTango.cpp"
+          - "CameraTango.h"
+          - "tango-gl/video_overlay.cpp"
+    resources:
+      - path: IndoorPathfinding/Resources/Assets.xcassets
+      - path: "IndoorPathfinding/Preview Content/Preview Assets.xcassets"
+      # Sprint 4: YOLO 모델 폴더 (내용물은 optional — .gitignore 제외)
+      - path: IndoorPathfinding/Resources/Models
+        optional: true
+        type: folder
+      - path: IndoorPathfinding/Resources/DemoMaps
+        type: folder
+    info:
+      path: IndoorPathfinding/Resources/Info.plist
+      properties:
+        CFBundleName: InPath
+        CFBundleDisplayName: InPath
+        CFBundleIdentifier: ac.koreatech.indoorpathfinding
+        CFBundleVersion: "1"
+        CFBundleShortVersionString: "1.0"
+        CFBundleExecutable: "$(EXECUTABLE_NAME)"
+        CFBundlePackageType: APPL
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        NSCameraUsageDescription: "실내 스캔과 AR 길찾기에 카메라를 사용합니다."
+        NSLocationWhenInUseUsageDescription: "VPS 초기 측위 보조에 위치를 사용합니다."
+        NSMotionUsageDescription: "ARKit 자세 추정에 모션 센서를 사용합니다."
+        NSPhotoLibraryAddUsageDescription: "스캔 디버그 이미지 저장을 위해 사진 라이브러리에 접근합니다."
+        # 운영 서버가 평문 HTTP (218.150.183.198:8080) 라 ATS 예외 필요.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        UIRequiredDeviceCapabilities:
+          - arkit
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations: {}
+    dependencies:
+      - package: GRDB
+      - package: ZIPFoundation
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ac.koreatech.indoorpathfinding
+        INFOPLIST_FILE: IndoorPathfinding/Resources/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        DEVELOPMENT_ASSET_PATHS: '"IndoorPathfinding/Preview Content"'
+
+        # --- Sprint 3.5: C++ 표준 및 브리징 헤더 ---
+        SWIFT_OBJC_BRIDGING_HEADER: "Vendor/RTABMap/Bridge/IndoorPathfinding-Bridging-Header.h"
+        CLANG_CXX_LANGUAGE_STANDARD: "gnu++17"
+        CLANG_CXX_LIBRARY: "libc++"
+        GCC_C_LANGUAGE_STANDARD: "gnu11"
+
+        # 헤더 탐색은 simulator/device 공통 (컴파일러가 bridging header 파싱에 필요)
+        SYSTEM_HEADER_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(SRCROOT)/Vendor/RTABMap/include"
+          - "$(SRCROOT)/Vendor/RTABMap/include/eigen3"
+          - "$(SRCROOT)/Vendor/RTABMap/include/pcl-1.15"
+          - "$(SRCROOT)/Vendor/RTABMap/include/rtabmap-0.23"
+          - "$(SRCROOT)/Vendor/RTABMap/include/opencv4"
+          - "$(SRCROOT)/Vendor/RTABMap/lib/vtk.framework/Headers"
+
+        HEADER_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(SRCROOT)/Vendor/RTABMap/Bridge"
+          - "$(SRCROOT)/Vendor/RTABMap/Bridge/tango-gl/include"
+          - "$(SRCROOT)/Vendor/RTABMap/Bridge/third-party/include"
+
+        # --- iphoneos 전용: 링크 ---
+        "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]":
+          - "$(inherited)"
+          - "$(SRCROOT)/Vendor/RTABMap/lib"
+          - "$(SRCROOT)/Vendor/RTABMap/lib/opencv4/3rdparty"
+
+        "FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]":
+          - "$(inherited)"
+          - "$(SRCROOT)/Vendor/RTABMap/lib"
+
+        "OTHER_LDFLAGS[sdk=iphoneos*]":
+          - "$(inherited)"
+          - "-lc++"
+          - "-ObjC"
+          - "-framework"
+          - "OpenGLES"
+          - "-framework"
+          - "vtk"
+          # rtabmap core
+          - "-lrtabmap_core"
+          - "-lrtabmap_utilite"
+          # OpenCV (high-level → low-level 순서)
+          - "-lopencv_xfeatures2d"
+          - "-lopencv_video"
+          - "-lopencv_tracking"
+          - "-lopencv_optflow"
+          - "-lopencv_ximgproc"
+          - "-lopencv_stitching"
+          - "-lopencv_photo"
+          - "-lopencv_objdetect"
+          - "-lopencv_aruco"
+          - "-lopencv_calib3d"
+          - "-lopencv_features2d"
+          - "-lopencv_imgcodecs"
+          - "-lopencv_imgproc"
+          - "-lopencv_flann"
+          - "-lopencv_core"
+          # PCL
+          - "-lpcl_surface"
+          - "-lpcl_segmentation"
+          - "-lpcl_stereo"
+          - "-lpcl_registration"
+          - "-lpcl_features"
+          - "-lpcl_filters"
+          - "-lpcl_sample_consensus"
+          - "-lpcl_keypoints"
+          - "-lpcl_ml"
+          - "-lpcl_octree"
+          - "-lpcl_search"
+          - "-lpcl_kdtree"
+          - "-lpcl_io_ply"
+          - "-lpcl_io"
+          - "-lpcl_common"
+          # g2o
+          - "-lg2o_core"
+          - "-lg2o_stuff"
+          - "-lg2o_csparse_extension"
+          - "-lg2o_solver_cholmod"
+          - "-lg2o_solver_csparse"
+          - "-lg2o_solver_dense"
+          - "-lg2o_solver_eigen"
+          - "-lg2o_solver_pcg"
+          - "-lg2o_solver_slam2d_linear"
+          - "-lg2o_solver_structure_only"
+          - "-lg2o_types_sba"
+          - "-lg2o_types_sclam2d"
+          - "-lg2o_types_sim3"
+          - "-lg2o_types_slam2d_addons"
+          - "-lg2o_types_slam2d"
+          - "-lg2o_types_slam3d_addons"
+          - "-lg2o_types_slam3d"
+          - "-lg2o_types_data"
+          - "-lg2o_types_icp"
+          # GTSAM
+          - "-lgtsam_unstable"
+          - "-lgtsam"
+          - "-lmetis-gtsam"
+          # SuiteSparse
+          - "-lspqr"
+          - "-lcholmod"
+          - "-lcxsparse"
+          - "-lcolamd"
+          - "-lcamd"
+          - "-lccolamd"
+          - "-lamd"
+          - "-lsuitesparseconfig"
+          # Boost
+          - "-lboost_serialization"
+          - "-lboost_timer"
+          - "-lboost_thread"
+          # LAS
+          - "-llas_c"
+          - "-llas"
+          - "-llaszip"
+          # Misc
+          - "-lflann_cpp_s"
+          - "-llz4"
+          # OpenCV 3rdparty — Vendor/RTABMap/lib/opencv4/3rdparty/
+          # liblibjpeg-turbo.a → -llibjpeg-turbo
+          # liblibpng.a → -llibpng
+          # libzlib.a → -lzlib
+          # liblibprotobuf.a → -llibprotobuf
+          - "-llibjpeg-turbo"
+          - "-llibpng"
+          - "-lzlib"
+          - "-llibprotobuf"
+          # System libraries
+          - "-lsqlite3"
+
+        # --- iphonesimulator 전용: SLAM 파일 제외 + 링크 skip ---
+        # iphonesimulator에서는 RTAB-Map C++ 전체 제외
+        "EXCLUDED_SOURCE_FILE_NAMES[sdk=iphonesimulator*]":
+          - "NativeWrapper.cpp"
+          - "RTABMapApp.cpp"
+          - "scene.cpp"
+          - "CameraMobile.cpp"
+          - "graph_drawable.cpp"
+          - "point_cloud_drawable.cpp"
+          - "util.cpp"
+          - "quad_color.cpp"
+          - "text_drawable.cpp"
+          - "bounding_box.cpp"
+          - "bounding_box_drawable.h"
+          - "line.cpp"
+          - "obj_loader.cpp"
+          - "mesh.cpp"
+          - "axis.cpp"
+          - "segment_drawable.cpp"
+          - "conversions.cpp"
+          - "camera.cpp"
+          - "gesture_camera.cpp"
+          - "trace.cpp"
+          - "texture.cpp"
+          - "quad.cpp"
+          - "drawable_object.cpp"
+          - "frustum.cpp"
+          - "shaders.cpp"
+          - "transform.cpp"
+          - "grid.cpp"
+          - "triangle.cpp"
+          - "circle.cpp"
+          - "cube.cpp"
+          - "goal_marker.cpp"
+          - "band.cpp"
+          - "video_overlay.cpp"
+          - "background_renderer.cc"
+          - "RTABMapBridge.swift"
+          # Sprint 8: PoseExport는 RTAB-Map 라이브러리에 의존 → simulator 제외
+          - "PoseExport.cpp"
+        "OTHER_LDFLAGS[sdk=iphonesimulator*]":
+          - "$(inherited)"
+
+  IndoorPathfindingTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - IndoorPathfindingTests
+    dependencies:
+      - target: IndoorPathfinding
+      - package: GRDB
+      - package: ZIPFoundation
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ac.koreatech.indoorpathfindingtests
+        GENERATE_INFOPLIST_FILE: YES
+
+  IndoorPathfindingUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - IndoorPathfindingUITests
+    dependencies:
+      - target: IndoorPathfinding
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ac.koreatech.indoorpathfindinguitests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  IndoorPathfinding:
+    build:
+      targets:
+        IndoorPathfinding: all
+        IndoorPathfindingTests: [test]
+        IndoorPathfindingUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - IndoorPathfindingTests
+        - IndoorPathfindingUITests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

@@ -1,0 +1,7 @@
+# Git LFS tracking for iOS binary dependencies
+Vendor/RTABMap/lib/**/*.a filter=lfs diff=lfs merge=lfs -text
+Vendor/RTABMap/lib/**/vtk.framework/** filter=lfs diff=lfs merge=lfs -text
+
+# Core ML model packages
+**/*.mlpackage/** filter=lfs diff=lfs merge=lfs -text
+**/*.mlmodelc/** filter=lfs diff=lfs merge=lfs -text
