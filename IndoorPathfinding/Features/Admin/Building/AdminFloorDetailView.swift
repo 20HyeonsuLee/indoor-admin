@@ -6,21 +6,49 @@ struct AdminFloorDetailView: View {
     let floor: AdminFloor
 
     @State private var scanLaunchContext: ScanLaunchContext?
-
     @State private var isMerging = false
     @State private var isBuilding = false
     @State private var actionMessage: String?
+    @State private var showAddArea = false
 
-    var chunks: [AdminScanChunk] {
-        (workspace.chunks[floor.id] ?? []).sorted { $0.uploadOrder < $1.uploadOrder }
+    // MARK: - Derived
+
+    private var floorAreas: [V1FloorArea] {
+        workspace.areasForFloor(floor.id)
     }
 
-    var canMerge: Bool {
+    private var currentAreaId: UUID? {
+        workspace.effectiveAreaId(floorId: floor.id)
+    }
+
+    private var chunks: [AdminScanChunk] {
+        workspace.chunksForArea(floorId: floor.id, areaId: currentAreaId)
+            .sorted { $0.uploadOrder < $1.uploadOrder }
+    }
+
+    private var canMerge: Bool {
         !workspace.selectedChunkIds.isEmpty && !isMerging
+    }
+
+    private var currentAreaKey: FloorAreaKey? {
+        currentAreaId.map { FloorAreaKey(floorId: floor.id, areaId: $0) }
+    }
+
+    private var currentMergeStatus: String? {
+        currentAreaKey.flatMap { workspace.mergeStatus[$0] }
+    }
+
+    private var currentProcessStatus: String? {
+        currentAreaKey.flatMap { workspace.processStatus[$0] }
     }
 
     var body: some View {
         List {
+            // Area picker (areas > 1일 때만 표시)
+            if floorAreas.count > 1 {
+                areaPickerSection
+            }
+
             // 스캔 캡처
             Section("스캔 캡처") {
                 Button {
@@ -120,7 +148,7 @@ struct AdminFloorDetailView: View {
                 } label: {
                     Label("그래프 보기", systemImage: "map")
                 }
-                .disabled(!floor.hasPath && workspace.processStatus != "COMPLETED")
+                .disabled(!floor.hasPath && currentProcessStatus != "COMPLETED")
             } header: {
                 Text("그래프")
             }
@@ -128,27 +156,51 @@ struct AdminFloorDetailView: View {
         .navigationTitle(floor.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
                 Button {
-                    Task { await workspace.loadChunks(floorId: floor.id) }
+                    showAddArea = true
+                } label: {
+                    Image(systemName: "plus.rectangle.on.folder")
+                }
+                Button {
+                    Task {
+                        await workspace.loadChunks(floorId: floor.id, areaId: currentAreaId)
+                    }
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
             }
+        }
+        .sheet(isPresented: $showAddArea) {
+            AddAreaSheet(
+                defaultLabel: "Area \((floorAreas.count + 1))",
+                onSave: { label in
+                    Task {
+                        do {
+                            let created = try await workspace.addArea(floorId: floor.id, label: label)
+                            workspace.selectArea(floorId: floor.id, areaId: created.areaId)
+                            await workspace.loadChunks(floorId: floor.id, areaId: created.areaId)
+                        } catch {
+                            workspace.errorMessage = error.localizedDescription
+                        }
+                    }
+                }
+            )
         }
         .fullScreenCover(item: $scanLaunchContext) { context in
             ScanSessionView(
                 launchContext: context,
                 serverClient: workspace.v1Client,
                 onFinished: { _ in
-                    Task { await workspace.loadChunks(floorId: floor.id) }
+                    Task { await workspace.loadChunks(floorId: floor.id, areaId: currentAreaId) }
                 },
                 onDiscarded: { /* no-op */ }
             )
         }
         .task {
             workspace.selectFloor(floor.id)
-            await workspace.loadChunks(floorId: floor.id)
+            await workspace.loadAreas(floorId: floor.id)
+            await workspace.loadChunks(floorId: floor.id, areaId: workspace.effectiveAreaId(floorId: floor.id))
         }
         .overlay(alignment: .bottom) {
             if let msg = workspace.errorMessage {
@@ -163,13 +215,46 @@ struct AdminFloorDetailView: View {
         }
     }
 
+    // MARK: - Area Picker Section
+
+    @ViewBuilder
+    private var areaPickerSection: some View {
+        Section {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(floorAreas) { area in
+                        AreaChip(
+                            area: area,
+                            isSelected: currentAreaId == area.areaId,
+                            onTap: {
+                                workspace.selectArea(floorId: floor.id, areaId: area.areaId)
+                                Task {
+                                    await workspace.loadChunks(floorId: floor.id, areaId: area.areaId)
+                                }
+                            }
+                        )
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        } header: {
+            if let areaLabel = floorAreas.first(where: { $0.areaId == currentAreaId })?.label {
+                Text("area: \(areaLabel)")
+            } else {
+                Text("area")
+            }
+        }
+    }
+
+    // MARK: - Actions
+
     @MainActor
     private func runMerge() async {
         isMerging = true
         defer { isMerging = false }
         actionMessage = nil
-        await workspace.mergeSelectedChunks(floorId: floor.id)
-        await workspace.loadChunks(floorId: floor.id)
+        await workspace.mergeSelectedChunks(floorId: floor.id, areaId: currentAreaId)
+        await workspace.loadChunks(floorId: floor.id, areaId: currentAreaId)
         actionMessage = "병합 완료"
     }
 
@@ -191,6 +276,71 @@ struct AdminFloorDetailView: View {
         } catch {
             actionMessage = "빌드 요청 실패: \(error.localizedDescription)"
         }
+    }
+}
+
+// MARK: - Area Chip
+
+private struct AreaChip: View {
+    let area: V1FloorArea
+    let isSelected: Bool
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 4) {
+                if area.isDefault {
+                    Image(systemName: "star.fill")
+                        .font(.caption2)
+                }
+                Text(area.label)
+                    .font(.subheadline)
+                    .fontWeight(isSelected ? .semibold : .regular)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                isSelected ? Color.accentColor : Color.secondary.opacity(0.15),
+                in: Capsule()
+            )
+            .foregroundStyle(isSelected ? Color.white : Color.primary)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Add Area Sheet
+
+struct AddAreaSheet: View {
+    let defaultLabel: String
+    let onSave: (String) -> Void
+
+    @State private var label: String = ""
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("area 이름") {
+                    TextField("이름", text: $label)
+                }
+            }
+            .navigationTitle("area 추가")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("취소") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("저장") {
+                        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+                        onSave(trimmed.isEmpty ? defaultLabel : trimmed)
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .onAppear { label = defaultLabel }
     }
 }
 
