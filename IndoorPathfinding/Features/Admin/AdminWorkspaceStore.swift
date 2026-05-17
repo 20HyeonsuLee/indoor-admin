@@ -15,6 +15,13 @@ struct AdminBuilding: Identifiable, Hashable {
     var displayName: String { name }
 }
 
+// MARK: - FloorAreaKey
+
+struct FloorAreaKey: Hashable {
+    let floorId: UUID
+    let areaId: UUID
+}
+
 struct AdminFloor: Identifiable, Hashable {
     var id: UUID
     var buildingId: UUID
@@ -65,6 +72,7 @@ struct AdminScanChunk: Identifiable, Hashable {
 
     var id: UUID
     var floorId: UUID
+    var areaId: UUID?
     var scanId: UUID
     var fileName: String?
     var fileSize: Int?
@@ -109,7 +117,10 @@ final class AdminWorkspaceStore {
     // State
     var buildings: [AdminBuilding] = []
     var floors: [UUID: [AdminFloor]] = [UUID: [AdminFloor]]()   // buildingId → floors
-    var chunks: [UUID: [AdminScanChunk]] = [UUID: [AdminScanChunk]]() // floorId → chunks
+    var areas: [UUID: [V1FloorArea]] = [:]                       // floorId → areas
+    var selectedAreaId: [UUID: UUID] = [:]                       // floorId → 선택된 areaId
+    var _areaChunks: [FloorAreaKey: [AdminScanChunk]] = [:]      // (floorId, areaId) → chunks
+    var chunks: [UUID: [AdminScanChunk]] = [UUID: [AdminScanChunk]]() // floorId → chunks (area 없는 legacy)
     var selectedBuildingId: UUID?
     var selectedFloorId: UUID?
     var selectedChunkIds: Set<UUID> = []
@@ -124,10 +135,10 @@ final class AdminWorkspaceStore {
     /// @Observable 매크로로 자동 관찰 가능 — UI에서 변경 즉시 반영.
     var lastExportedZipURL: URL?  // @Published equivalent via @Observable
 
-    // Merge/process state
-    var mergeStatus: String?
-    var processStatus: String?
-    var processProgress: Double?
+    // Merge/process state — FloorAreaKey 단위
+    var mergeStatus: [FloorAreaKey: String] = [:]
+    var processStatus: [FloorAreaKey: String] = [:]
+    var processProgress: [FloorAreaKey: Double] = [:]
 
     private(set) var cache: AdminCacheDatabase
 
@@ -185,16 +196,41 @@ final class AdminWorkspaceStore {
 
     var chunksForSelectedFloor: [AdminScanChunk] {
         guard let id = selectedFloorId else { return [] }
-        return (chunks[id] ?? []).sorted { $0.uploadOrder < $1.uploadOrder }
+        return chunksForArea(floorId: id, areaId: selectedAreaId[id]).sorted { $0.uploadOrder < $1.uploadOrder }
     }
 
     var selectedChunks: [AdminScanChunk] {
         guard let id = selectedFloorId else { return [] }
-        return (chunks[id] ?? []).filter { selectedChunkIds.contains($0.id) }
+        return chunksForArea(floorId: id, areaId: selectedAreaId[id]).filter { selectedChunkIds.contains($0.id) }
     }
 
     var canMerge: Bool {
         !selectedChunkIds.isEmpty
+    }
+
+    // MARK: - Area Accessors
+
+    /// floorId의 area 목록 (areaIndex 순 정렬)
+    func areasForFloor(_ floorId: UUID) -> [V1FloorArea] {
+        (areas[floorId] ?? []).sorted { $0.areaIndex < $1.areaIndex }
+    }
+
+    /// default area id (isDefault=true 첫 번째)
+    func defaultAreaId(floorId: UUID) -> UUID? {
+        areas[floorId]?.first { $0.isDefault }?.areaId
+    }
+
+    /// FloorAreaKey로 chunks 접근. areaId nil이면 legacy chunks 딕셔너리 fallback.
+    func chunksForArea(floorId: UUID, areaId: UUID?) -> [AdminScanChunk] {
+        guard let areaId else {
+            return chunks[floorId] ?? []
+        }
+        return _areaChunks[FloorAreaKey(floorId: floorId, areaId: areaId)] ?? []
+    }
+
+    /// 현재 floorId에 대한 효과적 areaId (선택됨 → default 순 fallback)
+    func effectiveAreaId(floorId: UUID) -> UUID? {
+        selectedAreaId[floorId] ?? defaultAreaId(floorId: floorId)
     }
 
     // MARK: - Buildings
@@ -374,6 +410,16 @@ final class AdminWorkspaceStore {
             try await client.deleteFloor(id: floor.id)
             floors[floor.buildingId]?.removeAll { $0.id == floor.id }
             chunks.removeValue(forKey: floor.id)
+            areas.removeValue(forKey: floor.id)
+            selectedAreaId.removeValue(forKey: floor.id)
+            let keysToRemove = _areaChunks.keys.filter { $0.floorId == floor.id }
+            for key in keysToRemove { _areaChunks.removeValue(forKey: key) }
+            let statusKeysToRemove = mergeStatus.keys.filter { $0.floorId == floor.id }
+            for key in statusKeysToRemove {
+                mergeStatus.removeValue(forKey: key)
+                processStatus.removeValue(forKey: key)
+                processProgress.removeValue(forKey: key)
+            }
             try? cache.deleteFloor(id: floor.id.uuidString)
             if selectedFloorId == floor.id {
                 selectedFloorId = floors[floor.buildingId]?.first?.id
@@ -385,21 +431,26 @@ final class AdminWorkspaceStore {
 
     // MARK: - Chunks
 
-    func loadChunks(floorId: UUID) async {
+    func loadChunks(floorId: UUID, areaId: UUID? = nil) async {
         guard let client = v1Client else { return }
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
+        let resolvedAreaId = areaId ?? effectiveAreaId(floorId: floorId)
         do {
-            let v1Chunks = try await client.listChunks(floorId: floorId)
+            let v1Chunks = try await client.listChunks(floorId: floorId, areaId: resolvedAreaId)
             let mapped = v1Chunks.map { c in
                 AdminScanChunk(
-                    id: c.chunkId, floorId: c.floorId, scanId: c.scanId,
-                    fileName: c.fileName, fileSize: c.fileSize,
+                    id: c.chunkId, floorId: c.floorId, areaId: resolvedAreaId,
+                    scanId: c.scanId, fileName: c.fileName, fileSize: c.fileSize,
                     status: .init(raw: c.status), active: c.active, uploadOrder: c.uploadOrder
                 )
             }
-            chunks[floorId] = mapped
+            if let aid = resolvedAreaId {
+                _areaChunks[FloorAreaKey(floorId: floorId, areaId: aid)] = mapped
+            } else {
+                chunks[floorId] = mapped
+            }
             try? cache.upsertChunks(v1Chunks.map { c in
                 CachedScanChunk(
                     id: c.chunkId.uuidString, floorId: c.floorId.uuidString, scanId: c.scanId.uuidString,
@@ -412,25 +463,33 @@ final class AdminWorkspaceStore {
         }
     }
 
-    func uploadChunk(floorId: UUID, fileURL: URL) async {
+    func uploadChunk(floorId: UUID, fileURL: URL, areaId: UUID? = nil) async {
         guard let client = v1Client else { return }
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
+        let resolvedAreaId = areaId ?? effectiveAreaId(floorId: floorId)
         do {
             // F5: zip 파일명 또는 manifest.json 에서 scan_id 자동 추출
             let extractedScanId = ZipScanIdExtractor.extractScanId(from: fileURL)
             let scanIdString = extractedScanId?.uuidString
 
-            let c = try await client.uploadChunk(floorId: floorId, fileURL: fileURL, scanId: scanIdString)
+            let c = try await client.uploadChunk(floorId: floorId, fileURL: fileURL, scanId: scanIdString, areaId: resolvedAreaId)
             let chunk = AdminScanChunk(
-                id: c.chunkId, floorId: c.floorId, scanId: c.scanId,
-                fileName: c.fileName, fileSize: c.fileSize,
+                id: c.chunkId, floorId: c.floorId, areaId: resolvedAreaId,
+                scanId: c.scanId, fileName: c.fileName, fileSize: c.fileSize,
                 status: .init(raw: c.status), active: c.active, uploadOrder: c.uploadOrder
             )
-            chunks[floorId, default: []].removeAll { $0.scanId == chunk.scanId }
-            chunks[floorId, default: []].append(chunk)
-            chunks[floorId]?.sort { $0.uploadOrder < $1.uploadOrder }
+            if let aid = resolvedAreaId {
+                let key = FloorAreaKey(floorId: floorId, areaId: aid)
+                _areaChunks[key, default: []].removeAll { $0.scanId == chunk.scanId }
+                _areaChunks[key, default: []].append(chunk)
+                _areaChunks[key]?.sort { $0.uploadOrder < $1.uploadOrder }
+            } else {
+                chunks[floorId, default: []].removeAll { $0.scanId == chunk.scanId }
+                chunks[floorId, default: []].append(chunk)
+                chunks[floorId]?.sort { $0.uploadOrder < $1.uploadOrder }
+            }
             // F2: cache 동기화
             try? cache.upsertChunks([
                 CachedScanChunk(
@@ -451,7 +510,12 @@ final class AdminWorkspaceStore {
         defer { isLoading = false }
         do {
             try await client.deleteChunk(floorId: chunk.floorId, chunkId: chunk.id)
-            chunks[chunk.floorId]?.removeAll { $0.id == chunk.id }
+            if let aid = chunk.areaId {
+                let key = FloorAreaKey(floorId: chunk.floorId, areaId: aid)
+                _areaChunks[key]?.removeAll { $0.id == chunk.id }
+            } else {
+                chunks[chunk.floorId]?.removeAll { $0.id == chunk.id }
+            }
             selectedChunkIds.remove(chunk.id)
             // F2: cache 동기화
             try? cache.deleteChunks(ids: [chunk.id.uuidString])
@@ -471,34 +535,42 @@ final class AdminWorkspaceStore {
 
     // MARK: - Merge & Process
 
-    func mergeSelectedChunks(floorId: UUID) async {
+    func mergeSelectedChunks(floorId: UUID, areaId: UUID? = nil) async {
         guard let client = v1Client, !selectedChunkIds.isEmpty else { return }
         isLoading = true
         errorMessage = nil
-        mergeStatus = nil
         defer { isLoading = false }
+        let resolvedAreaId = areaId ?? effectiveAreaId(floorId: floorId)
+        let key = resolvedAreaId.map { FloorAreaKey(floorId: floorId, areaId: $0) }
+        if let key { mergeStatus[key] = nil }
         do {
             let chunkIds = Array(selectedChunkIds)
-            let result = try await client.mergeChunks(floorId: floorId, chunkIds: chunkIds)
-            mergeStatus = result.status
+            let result = try await client.mergeChunks(floorId: floorId, chunkIds: chunkIds, areaId: resolvedAreaId)
+            if let key { mergeStatus[key] = result.status }
             selectedChunkIds.removeAll()
             // merge 후 process 자동 트리거
-            let processResult = try await client.processFloor(floorId: floorId)
-            processStatus = processResult.status
-            processProgress = processResult.progress
+            let processResult = try await client.processFloor(floorId: floorId, areaId: resolvedAreaId)
+            if let key {
+                processStatus[key] = processResult.status
+                processProgress[key] = processResult.progress
+            }
             // chunk list 갱신
-            await loadChunks(floorId: floorId)
+            await loadChunks(floorId: floorId, areaId: resolvedAreaId)
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    func pollProcessStatus(floorId: UUID) async {
+    func pollProcessStatus(floorId: UUID, areaId: UUID? = nil) async {
         guard let client = v1Client else { return }
+        let resolvedAreaId = areaId ?? effectiveAreaId(floorId: floorId)
+        let key = resolvedAreaId.map { FloorAreaKey(floorId: floorId, areaId: $0) }
         do {
-            let result = try await client.processStatus(floorId: floorId)
-            processStatus = result.status
-            processProgress = result.progress
+            let result = try await client.processStatus(floorId: floorId, areaId: resolvedAreaId)
+            if let key {
+                processStatus[key] = result.status
+                processProgress[key] = result.progress
+            }
             if result.status == "COMPLETED" {
                 // floor hasPath 갱신
                 if let buildingId = selectedBuilding?.id {
@@ -512,6 +584,37 @@ final class AdminWorkspaceStore {
         }
     }
 
+    // MARK: - Areas
+
+    func loadAreas(floorId: UUID) async {
+        guard let client = v1Client else { return }
+        do {
+            let v1Areas = try await client.listAreas(floorId: floorId)
+            areas[floorId] = v1Areas
+            // 선택된 area가 없으면 default 자동 선택
+            if selectedAreaId[floorId] == nil {
+                selectedAreaId[floorId] = v1Areas.first { $0.isDefault }?.areaId ?? v1Areas.first?.areaId
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func addArea(floorId: UUID, label: String) async throws -> V1FloorArea {
+        guard let client = v1Client else {
+            throw V1ClientError.invalidBaseURL
+        }
+        let created = try await client.createArea(floorId: floorId, label: label)
+        areas[floorId, default: []].append(created)
+        areas[floorId]?.sort { $0.areaIndex < $1.areaIndex }
+        return created
+    }
+
+    func selectArea(floorId: UUID, areaId: UUID) {
+        selectedAreaId[floorId] = areaId
+        selectedChunkIds = []
+    }
+
     // MARK: - Helpers
 
     func selectBuilding(_ id: UUID) {
@@ -523,7 +626,5 @@ final class AdminWorkspaceStore {
     func selectFloor(_ id: UUID) {
         selectedFloorId = id
         selectedChunkIds = []
-        mergeStatus = nil
-        processStatus = nil
     }
 }

@@ -7,6 +7,8 @@ import Foundation
 private final class FakeURLProtocol: URLProtocol {
 
     nonisolated(unsafe) static var nextResponseJSON: [String: Any] = [:]
+    /// nextResponseJSON 대신 raw Data를 직접 지정할 때 사용 (배열 응답 등)
+    nonisolated(unsafe) static var nextResponseData: Data? = nil
     nonisolated(unsafe) static var shouldFail = false
     nonisolated(unsafe) static var capturedRequests: [URLRequest] = []
 
@@ -19,7 +21,12 @@ private final class FakeURLProtocol: URLProtocol {
             client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
             return
         }
-        let data = (try? JSONSerialization.data(withJSONObject: FakeURLProtocol.nextResponseJSON)) ?? Data()
+        let data: Data
+        if let override = FakeURLProtocol.nextResponseData {
+            data = override
+        } else {
+            data = (try? JSONSerialization.data(withJSONObject: FakeURLProtocol.nextResponseJSON)) ?? Data()
+        }
         let resp = HTTPURLResponse(
             url: request.url!,
             statusCode: 200,
@@ -37,6 +44,7 @@ private func fakeSession() -> URLSession {
     FakeURLProtocol.capturedRequests = []
     FakeURLProtocol.shouldFail = false
     FakeURLProtocol.nextResponseJSON = [:]
+    FakeURLProtocol.nextResponseData = nil
     let config = URLSessionConfiguration.ephemeral
     config.protocolClasses = [FakeURLProtocol.self]
     return URLSession(configuration: config)
@@ -109,7 +117,7 @@ struct AdminWorkspaceStoreTests {
         // 사전: in-memory chunks 에 청크 세팅
         store.chunks[floorId] = [
             AdminScanChunk(
-                id: chunkId, floorId: floorId, scanId: scanId,
+                id: chunkId, floorId: floorId, areaId: nil, scanId: scanId,
                 fileName: "test.zip", fileSize: 100,
                 status: .uploaded, active: true, uploadOrder: 0
             )
@@ -119,7 +127,7 @@ struct AdminWorkspaceStoreTests {
         FakeURLProtocol.nextResponseJSON = [:]
 
         let chunk = AdminScanChunk(
-            id: chunkId, floorId: floorId, scanId: scanId,
+            id: chunkId, floorId: floorId, areaId: nil, scanId: scanId,
             fileName: "test.zip", fileSize: 100,
             status: .uploaded, active: true, uploadOrder: 0
         )
@@ -158,6 +166,127 @@ struct AdminWorkspaceStoreTests {
         #expect(store.errorMessage == nil)
         let updated = store.floors[buildingId]?.first { $0.id == floorId }
         #expect(updated?.name == "1층-renamed")
+    }
+
+    // MARK: - Area: loadAreas
+
+    @Test("loadAreas 성공 시 areas state 갱신 + default area 자동 선택")
+    func loadAreasUpdatesState() async throws {
+        let session = fakeSession()
+        let db = try AdminCacheDatabase.inMemoryFallback()
+        let store = makeStore(db: db, session: session)
+
+        let floorId = UUID()
+        let areaId = UUID()
+
+        // listAreas 는 배열 응답
+        FakeURLProtocol.nextResponseData = try JSONSerialization.data(
+            withJSONObject: [[
+                "areaId": areaId.uuidString,
+                "floorId": floorId.uuidString,
+                "areaIndex": 0,
+                "label": "기본 구역",
+                "isDefault": true,
+                "createdAt": "2025-01-01T00:00:00Z"
+            ]]
+        )
+
+        await store.loadAreas(floorId: floorId)
+
+        #expect(store.areas[floorId]?.count == 1)
+        #expect(store.areas[floorId]?.first?.areaId == areaId)
+        #expect(store.selectedAreaId[floorId] == areaId)
+    }
+
+    // MARK: - Area: addArea
+
+    @Test("addArea 성공 시 areas 에 새 area 추가")
+    func addAreaAppendsToState() async throws {
+        let session = fakeSession()
+        let db = try AdminCacheDatabase.inMemoryFallback()
+        let store = makeStore(db: db, session: session)
+
+        let floorId = UUID()
+        let newAreaId = UUID()
+
+        FakeURLProtocol.nextResponseData = try JSONSerialization.data(
+            withJSONObject: [
+                "areaId": newAreaId.uuidString,
+                "floorId": floorId.uuidString,
+                "areaIndex": 1,
+                "label": "사무실 영역",
+                "isDefault": false,
+                "createdAt": "2025-01-01T00:00:00Z"
+            ]
+        )
+
+        let created = try await store.addArea(floorId: floorId, label: "사무실 영역")
+
+        #expect(created.areaId == newAreaId)
+        #expect(store.areas[floorId]?.contains { $0.areaId == newAreaId } == true)
+    }
+
+    // MARK: - Area: selectArea
+
+    @Test("selectArea 시 selectedAreaId 변경 + selectedChunkIds 초기화")
+    func selectAreaChangesSelection() async throws {
+        let session = fakeSession()
+        let db = try AdminCacheDatabase.inMemoryFallback()
+        let store = makeStore(db: db, session: session)
+
+        let floorId = UUID()
+        let areaId1 = UUID()
+        let areaId2 = UUID()
+        let chunkId = UUID()
+
+        store.selectedAreaId[floorId] = areaId1
+        store.selectedChunkIds = [chunkId]
+
+        store.selectArea(floorId: floorId, areaId: areaId2)
+
+        #expect(store.selectedAreaId[floorId] == areaId2)
+        #expect(store.selectedChunkIds.isEmpty)
+    }
+
+    // MARK: - Area: chunksForArea accessor
+
+    @Test("chunksForArea accessor 가 area 별로 올바르게 분리")
+    func chunksForAreaAccessorSeparatesCorrectly() async throws {
+        let session = fakeSession()
+        let db = try AdminCacheDatabase.inMemoryFallback()
+        let store = makeStore(db: db, session: session)
+
+        let floorId = UUID()
+        let area1 = UUID()
+        let area2 = UUID()
+        let chunk1Id = UUID()
+        let chunk2Id = UUID()
+
+        let key1 = FloorAreaKey(floorId: floorId, areaId: area1)
+        let key2 = FloorAreaKey(floorId: floorId, areaId: area2)
+
+        store._areaChunks[key1] = [
+            AdminScanChunk(
+                id: chunk1Id, floorId: floorId, areaId: area1, scanId: UUID(),
+                fileName: "a1.zip", fileSize: 100,
+                status: .uploaded, active: true, uploadOrder: 0
+            )
+        ]
+        store._areaChunks[key2] = [
+            AdminScanChunk(
+                id: chunk2Id, floorId: floorId, areaId: area2, scanId: UUID(),
+                fileName: "a2.zip", fileSize: 200,
+                status: .uploaded, active: true, uploadOrder: 0
+            )
+        ]
+
+        let chunksA1 = store.chunksForArea(floorId: floorId, areaId: area1)
+        let chunksA2 = store.chunksForArea(floorId: floorId, areaId: area2)
+
+        #expect(chunksA1.count == 1)
+        #expect(chunksA1.first?.id == chunk1Id)
+        #expect(chunksA2.count == 1)
+        #expect(chunksA2.first?.id == chunk2Id)
     }
 
     @Test("updateFloor 네트워크 실패 시 errorMessage 설정, floors 원본 유지")

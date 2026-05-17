@@ -194,7 +194,7 @@
 		0BC215CED76D7137BFD86BEE /* util.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = util.cpp; sourceTree = "<group>"; };
 		0D9F904F4867048FEB6F817C /* ChunkRolloverBridgeAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChunkRolloverBridgeAdapters.swift; sourceTree = "<group>"; };
 		0E287250C8D92B18762A2D86 /* ScanMetadataDatabaseMigrationV3Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanMetadataDatabaseMigrationV3Tests.swift; sourceTree = "<group>"; };
-		0EC7C8CAD0C0A2CAB0B004EB /* .gitignore */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitignore; sourceTree = "<group>"; };
+		0EC7C8CAD0C0A2CAB0B004EB /* .gitignore */ = {isa = PBXFileReference; path = .gitignore; sourceTree = "<group>"; };
 		11866D7A6941D22C17384AB5 /* ScanSessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanSessionView.swift; sourceTree = "<group>"; };
 		13FCFDE9C6F464AEF1D5E338 /* drawable_object.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = drawable_object.cpp; sourceTree = "<group>"; };
 		150CB117BB05BC807937A991 /* RTABMapBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RTABMapBridge.swift; sourceTree = "<group>"; };
@@ -270,7 +270,7 @@
 		749D60C3B4644C422DB26700 /* DepthScaleCalibrator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DepthScaleCalibrator.swift; sourceTree = "<group>"; };
 		7504AF607A5164F80BBBA7CB /* InterfloorMarkRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfloorMarkRepository.swift; sourceTree = "<group>"; };
 		754363A885374766692F2223 /* PoseFileWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PoseFileWriter.swift; sourceTree = "<group>"; };
-		79CCA6F4DF9A2CF2B1CEDD29 /* IndoorPathfinding.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = IndoorPathfinding.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		79CCA6F4DF9A2CF2B1CEDD29 /* IndoorPathfinding.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = IndoorPathfinding.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7A0FC01CF46590748018086F /* ScanMetadataDatabaseMigrationV7Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanMetadataDatabaseMigrationV7Tests.swift; sourceTree = "<group>"; };
 		7C1F7B5B4FECECC28CEDCD9E /* AdminWorkspaceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminWorkspaceStore.swift; sourceTree = "<group>"; };
 		7C3F8EDF8B4273F9DA40A3A6 /* AdminShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminShellView.swift; sourceTree = "<group>"; };
@@ -921,7 +921,7 @@
 			mainGroup = 3C37AE670A82BD6489E1D1EA;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB" */,
+				A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
 				035FE36193140358C375BC01 /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -1213,7 +1213,6 @@
 				CLANG_CXX_LIBRARY = "libc++";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				DEVELOPMENT_ASSET_PATHS = "\"IndoorPathfinding/Preview Content\"";
-				DEVELOPMENT_TEAM = RDTWAVXLC3;
 				"EXCLUDED_SOURCE_FILE_NAMES[sdk=iphonesimulator*]" = (
 					NativeWrapper.cpp,
 					RTABMapApp.cpp,
@@ -1358,7 +1357,9 @@
 					"-llibprotobuf",
 					"-lsqlite3",
 				);
-				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = "$(inherited)";
+				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = ac.koreatech.indoorpathfinding;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "Vendor/RTABMap/Bridge/IndoorPathfinding-Bridging-Header.h";
@@ -1499,7 +1500,6 @@
 				CLANG_CXX_LIBRARY = "libc++";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				DEVELOPMENT_ASSET_PATHS = "\"IndoorPathfinding/Preview Content\"";
-				DEVELOPMENT_TEAM = RDTWAVXLC3;
 				"EXCLUDED_SOURCE_FILE_NAMES[sdk=iphonesimulator*]" = (
 					NativeWrapper.cpp,
 					RTABMapApp.cpp,
@@ -1644,7 +1644,9 @@
 					"-llibprotobuf",
 					"-lsqlite3",
 				);
-				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = "$(inherited)";
+				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = ac.koreatech.indoorpathfinding;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "Vendor/RTABMap/Bridge/IndoorPathfinding-Bridging-Header.h";
@@ -1729,7 +1731,7 @@
 				minimumVersion = 0.9.19;
 			};
 		};
-		A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB" */ = {
+		A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/groue/GRDB.swift";
 			requirement = {
@@ -1742,7 +1744,7 @@
 /* Begin XCSwiftPackageProductDependency section */
 		0F5BFE6B2E1C6CBE2B7D3B30 /* GRDB */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB" */;
+			package = A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
 			productName = GRDB;
 		};
 		2DC72AD233964E4CCB906D1D /* ZIPFoundation */ = {
@@ -1752,7 +1754,7 @@
 		};
 		33128A89E61BFC3F9229DB6F /* GRDB */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB" */;
+			package = A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
 			productName = GRDB;
 		};
 		F2883010291F8E9E28DFB02D /* ZIPFoundation */ = {
