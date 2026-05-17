@@ -3,7 +3,7 @@ import Foundation
 
 /// scan_metadata.db 래퍼. Migration v1 포함.
 /// `Documents/scans/{scan_id}/scan_metadata.db` 위치에 생성한다.
-final class ScanMetadataDatabase {
+final class ScanMetadataDatabase: @unchecked Sendable {
     let dbQueue: DatabaseQueue
 
     init(dbURL: URL) throws {
@@ -32,6 +32,218 @@ final class ScanMetadataDatabase {
         }
         let destination = try DatabaseQueue(path: destinationURL.path, configuration: config)
         try dbQueue.backup(to: destination)
+    }
+
+    struct ChunkSnapshotSummary: Sendable {
+        let scanId: String
+        let keyframeCount: Int
+        let branchMarkCount: Int
+        let branchEdgeCount: Int
+    }
+
+    /// session-level sidecar backup 을 chunk archive 용 sidecar 로 정규화한다.
+    ///
+    /// 서버 ingest 계약상 ZIP root, manifest.scan_id, scan_session.id 가 모두 같아야 한다.
+    /// chunked scan 은 RTABMap DB가 chunk 별로 나뉘므로 sidecar 도 같은 시간창의 row 만 남긴다.
+    static func prepareChunkSnapshot(
+        at snapshotURL: URL,
+        chunkScanId: String,
+        startedAt: Date,
+        endedAt: Date
+    ) throws -> ChunkSnapshotSummary {
+        let startMs = Int64(startedAt.timeIntervalSince1970 * 1000)
+        let endMs = max(startMs, Int64(endedAt.timeIntervalSince1970 * 1000))
+
+        let queue = try DatabaseQueue(path: snapshotURL.path)
+        return try queue.write { db in
+            try db.execute(sql: "PRAGMA defer_foreign_keys = ON")
+
+            let tables = Set(try String.fetchAll(
+                db,
+                sql: "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ))
+            func hasTable(_ name: String) -> Bool { tables.contains(name) }
+
+            let originalScanId = try String.fetchOne(
+                db,
+                sql: "SELECT id FROM scan_session LIMIT 1"
+            ) ?? chunkScanId
+
+            try db.execute(sql: "DROP TABLE IF EXISTS temp.keep_seq")
+            try db.execute(sql: "CREATE TEMP TABLE keep_seq(seq INTEGER PRIMARY KEY)")
+            try db.execute(
+                sql: """
+                INSERT OR IGNORE INTO keep_seq(seq)
+                SELECT seq FROM keyframe_meta
+                 WHERE captured_at BETWEEN ? AND ?
+                """,
+                arguments: [startMs, endMs]
+            )
+
+            if hasTable("poi_mark") {
+                try db.execute(
+                    sql: """
+                    INSERT OR IGNORE INTO keep_seq(seq)
+                    SELECT keyframe_seq FROM poi_mark
+                     WHERE created_at BETWEEN ? AND ?
+                    """,
+                    arguments: [startMs, endMs]
+                )
+            }
+            if hasTable("poi_photo") {
+                try db.execute(
+                    sql: """
+                    INSERT OR IGNORE INTO keep_seq(seq)
+                    SELECT keyframe_seq FROM poi_photo
+                     WHERE captured_at BETWEEN ? AND ?
+                    """,
+                    arguments: [startMs, endMs]
+                )
+            }
+            if hasTable("branch_mark") {
+                try db.execute(
+                    sql: """
+                    INSERT OR IGNORE INTO keep_seq(seq)
+                    SELECT keyframe_seq FROM branch_mark
+                     WHERE created_at BETWEEN ? AND ?
+                    """,
+                    arguments: [startMs, endMs]
+                )
+            }
+            if hasTable("interfloor_mark") {
+                try db.execute(
+                    sql: """
+                    INSERT OR IGNORE INTO keep_seq(seq)
+                    SELECT keyframe_seq FROM interfloor_mark
+                     WHERE created_at BETWEEN ? AND ?
+                    """,
+                    arguments: [startMs, endMs]
+                )
+            }
+
+            try db.execute(sql: "DROP TABLE IF EXISTS temp.keep_poi_id")
+            try db.execute(sql: "CREATE TEMP TABLE keep_poi_id(id INTEGER PRIMARY KEY)")
+            if hasTable("poi_mark") {
+                try db.execute(
+                    sql: """
+                    INSERT OR IGNORE INTO keep_poi_id(id)
+                    SELECT id FROM poi_mark
+                     WHERE created_at BETWEEN ? AND ?
+                       AND keyframe_seq IN (SELECT seq FROM keep_seq)
+                    """,
+                    arguments: [startMs, endMs]
+                )
+            }
+
+            try db.execute(sql: "DROP TABLE IF EXISTS temp.keep_branch_id")
+            try db.execute(sql: "CREATE TEMP TABLE keep_branch_id(id INTEGER PRIMARY KEY)")
+            if hasTable("branch_mark") {
+                try db.execute(
+                    sql: """
+                    INSERT OR IGNORE INTO keep_branch_id(id)
+                    SELECT id FROM branch_mark
+                     WHERE created_at BETWEEN ? AND ?
+                       AND keyframe_seq IN (SELECT seq FROM keep_seq)
+                    """,
+                    arguments: [startMs, endMs]
+                )
+            }
+
+            try db.execute(sql: "DROP TABLE IF EXISTS temp.keep_interfloor_id")
+            try db.execute(sql: "CREATE TEMP TABLE keep_interfloor_id(id INTEGER PRIMARY KEY)")
+            if hasTable("interfloor_mark") {
+                try db.execute(
+                    sql: """
+                    INSERT OR IGNORE INTO keep_interfloor_id(id)
+                    SELECT id FROM interfloor_mark
+                     WHERE created_at BETWEEN ? AND ?
+                       AND keyframe_seq IN (SELECT seq FROM keep_seq)
+                    """,
+                    arguments: [startMs, endMs]
+                )
+            }
+
+            if hasTable("branch_edge") {
+                try db.execute(
+                    sql: """
+                    DELETE FROM branch_edge
+                     WHERE from_node_id NOT IN (SELECT CAST(id AS TEXT) FROM keep_branch_id)
+                        OR to_node_id NOT IN (SELECT CAST(id AS TEXT) FROM keep_branch_id)
+                    """
+                )
+            }
+            if hasTable("poi_photo") {
+                try db.execute(
+                    sql: "DELETE FROM poi_photo WHERE poi_mark_id NOT IN (SELECT id FROM keep_poi_id)"
+                )
+            }
+            if hasTable("poi_mark") {
+                try db.execute(
+                    sql: "DELETE FROM poi_mark WHERE id NOT IN (SELECT id FROM keep_poi_id)"
+                )
+            }
+            if hasTable("branch_mark") {
+                try db.execute(
+                    sql: "DELETE FROM branch_mark WHERE id NOT IN (SELECT id FROM keep_branch_id)"
+                )
+            }
+            if hasTable("interfloor_mark") {
+                try db.execute(
+                    sql: "DELETE FROM interfloor_mark WHERE id NOT IN (SELECT id FROM keep_interfloor_id)"
+                )
+            }
+            try db.execute(
+                sql: "DELETE FROM keyframe_meta WHERE seq NOT IN (SELECT seq FROM keep_seq)"
+            )
+
+            let childTables = [
+                "keyframe_meta", "poi_mark", "poi_photo", "branch_mark",
+                "interfloor_mark", "branch_edge",
+            ]
+            for table in childTables where hasTable(table) {
+                try db.execute(
+                    sql: "UPDATE \(table) SET scan_id = ? WHERE scan_id = ?",
+                    arguments: [chunkScanId, originalScanId]
+                )
+            }
+
+            let keyframeCount = try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM keyframe_meta WHERE scan_id = ?",
+                arguments: [chunkScanId]
+            ) ?? 0
+            let branchMarkCount = hasTable("branch_mark")
+                ? (try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM branch_mark WHERE scan_id = ?", arguments: [chunkScanId]) ?? 0)
+                : 0
+            let branchEdgeCount = hasTable("branch_edge")
+                ? (try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM branch_edge WHERE scan_id = ?", arguments: [chunkScanId]) ?? 0)
+                : 0
+
+            try db.execute(
+                sql: """
+                UPDATE scan_session
+                   SET id = ?, started_at = ?, ended_at = ?, state = 'saved', keyframe_count = ?
+                 WHERE id = ?
+                """,
+                arguments: [chunkScanId, startMs, endMs, keyframeCount, originalScanId]
+            )
+
+            let fkErrors = try Row.fetchAll(db, sql: "PRAGMA foreign_key_check")
+            guard fkErrors.isEmpty else {
+                throw NSError(
+                    domain: "ScanMetadataDatabase",
+                    code: 787,
+                    userInfo: [NSLocalizedDescriptionKey: "chunk scan_metadata.db foreign_key_check failed"]
+                )
+            }
+
+            return ChunkSnapshotSummary(
+                scanId: chunkScanId,
+                keyframeCount: keyframeCount,
+                branchMarkCount: branchMarkCount,
+                branchEdgeCount: branchEdgeCount
+            )
+        }
     }
 
     // MARK: - Migration

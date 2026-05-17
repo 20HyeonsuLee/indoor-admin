@@ -31,6 +31,8 @@
 	<string>실내 스캔과 AR 길찾기에 카메라를 사용합니다.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>VPS 초기 측위 보조에 위치를 사용합니다.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>로컬 개발 서버와 통신하기 위해 같은 네트워크의 Mac에 연결합니다.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>ARKit 자세 추정에 모션 센서를 사용합니다.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

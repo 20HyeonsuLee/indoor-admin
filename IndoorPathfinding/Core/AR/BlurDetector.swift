@@ -6,7 +6,7 @@ import OSLog
 /// Sprint 95: 모션블러 frame reject용 sharpness gate.
 ///
 /// 알고리즘: Variance of Laplacian (Pech-Pacheco 2000).
-///   - 480×360 으로 downsample → Laplacian 3x3 convolution → variance.
+///   - 320×240 으로 downsample → Laplacian 3x3 convolution → variance.
 ///   - variance 가 threshold 미만이면 blur 로 판정해 reject.
 ///
 /// 성능 목표: 480×360 frame당 < 1ms (vImage 사용).
@@ -22,9 +22,9 @@ final class BlurDetector {
     /// reject threshold. variance 가 이 값 미만이면 blur 판정.
     let threshold: Double
 
-    /// downsample 목표 resolution. 480x360.
-    private static let targetWidth = 480
-    private static let targetHeight = 360
+    /// downsample 목표 resolution. Sprint 96: 발열 완화를 위해 320x240으로 낮춤.
+    private static let targetWidth = 320
+    private static let targetHeight = 240
 
     /// 통계 (디버그용). reject 비율 모니터링.
     private(set) var totalEvaluated: Int = 0
@@ -57,7 +57,7 @@ final class BlurDetector {
         return blurred
     }
 
-    /// Y plane 에서 480x360 downsample → Laplacian convolution → variance 반환.
+    /// Y plane 에서 320x240 downsample → Laplacian convolution → variance 반환.
     private func computeLaplacianVariance(_ pixelBuffer: CVPixelBuffer) -> Double {
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }

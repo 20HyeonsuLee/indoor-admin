@@ -5,12 +5,34 @@ import Foundation
 // MARK: - Protocol
 
 protocol MarkRepositoryProtocol {
-    func insertPOI(scanId: String, keyframeSeq: Int, transform: simd_float4x4) throws
     func insertBranch(scanId: String, keyframeSeq: Int, transform: simd_float4x4) throws
 }
 
 
 // MARK: - 구현
+
+/// mark world point 를 keyframe-local frame (3D) 으로 변환한다.
+///
+/// 서버 pose_backfill 이 reprocess 후 `R_kf_optimized @ delta_local + t_kf_optimized` 로
+/// 마크 위치를 재구성한다. delta 가 keyframe-local frame 이어야 keyframe rotation 변화도
+/// 자동 추적된다 (loop closure 후에도 정합 유지).
+///
+/// `keyframeTransform == transform` 이면 delta = (0, 0, 0).
+@inline(__always)
+func markDeltaInKeyframeLocal(
+    markTransform: simd_float4x4,
+    keyframeTransform: simd_float4x4
+) -> (dx: Double, dy: Double, dz: Double) {
+    let inv = simd_inverse(keyframeTransform)
+    let markHomog = simd_float4(
+        markTransform.columns.3.x,
+        markTransform.columns.3.y,
+        markTransform.columns.3.z,
+        1.0
+    )
+    let local = inv * markHomog
+    return (Double(local.x), Double(local.y), Double(local.z))
+}
 
 /// POI / Branch mark DB insert. KeyframeRepository와 동일 background serial queue에서 사용.
 /// Sprint 65: trackId 인자 제거 — 수동 POI 단일 경로 (source 항상 'manual').
@@ -23,49 +45,10 @@ final class MarkRepository: MarkRepositoryProtocol, @unchecked Sendable {
         self.db = db
     }
 
-    /// Protocol 충족 (v6 호환 시그니처). delta=(0,0,0) 명시 저장.
-    func insertPOI(scanId: String, keyframeSeq: Int, transform: simd_float4x4) throws {
-        try insertPOI(
-            scanId: scanId,
-            keyframeSeq: keyframeSeq,
-            transform: transform,
-            keyframeTransform: transform,
-            label: nil
-        )
-    }
-
-    /// Sprint 88 v8: keyframeTransform 인자 추가. POI는 markWorld==keyframe → delta=(0,0,0).
-    @discardableResult
-    func insertPOI(
-        scanId: String,
-        keyframeSeq: Int,
-        transform: simd_float4x4,
-        keyframeTransform: simd_float4x4,
-        label: String? = nil
-    ) throws -> Int64 {
-        let blob = poseBlob(from: transform)
-        let t = SIMD3<Float>(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z)
-        let dx = Double(transform.columns.3.x - keyframeTransform.columns.3.x)
-        let dy = Double(transform.columns.3.y - keyframeTransform.columns.3.y)
-        let dz = Double(transform.columns.3.z - keyframeTransform.columns.3.z)
-        var mark = PoiMark(
-            id: nil,
-            scanId: scanId,
-            keyframeSeq: keyframeSeq,
-            createdAt: nowMs(),
-            poseMatrix: blob,
-            tx: Double(t.x),
-            ty: Double(t.y),
-            tz: Double(t.z),
-            label: label,
-            source: PoiMark.Source.manual.rawValue,
-            dxLocal: dx,
-            dyLocal: dy,
-            dzLocal: dz
-        )
-        return try db.dbQueue.write { db in
-            try mark.save(db)
-            return db.lastInsertedRowID
+    /// POI 단건 삭제 (poi_photo 는 FK CASCADE 로 자동 제거).
+    func deletePOI(id: Int64) throws {
+        try db.dbQueue.write { db in
+            try db.execute(sql: "DELETE FROM poi_mark WHERE id = ?", arguments: [id])
         }
     }
 
@@ -129,9 +112,10 @@ final class MarkRepository: MarkRepositoryProtocol, @unchecked Sendable {
     ) throws -> Int64 {
         let blob = poseBlob(from: transform)
         let t = SIMD3<Float>(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z)
-        let dx = Double(transform.columns.3.x - keyframeTransform.columns.3.x)
-        let dy = Double(transform.columns.3.y - keyframeTransform.columns.3.y)
-        let dz = Double(transform.columns.3.z - keyframeTransform.columns.3.z)
+        let (dx, dy, dz) = markDeltaInKeyframeLocal(
+            markTransform: transform,
+            keyframeTransform: keyframeTransform
+        )
         var mark = BranchMark(
             id: nil,
             scanId: scanId,

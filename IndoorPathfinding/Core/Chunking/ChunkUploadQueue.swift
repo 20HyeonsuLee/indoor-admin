@@ -1,6 +1,29 @@
 import Foundation
 import OSLog
 
+private final class ChunkUploadResponseBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var dataByTaskId: [Int: Data] = [:]
+
+    func append(_ data: Data, taskId: Int) {
+        lock.lock()
+        dataByTaskId[taskId, default: Data()].append(data)
+        lock.unlock()
+    }
+
+    func take(taskId: Int) -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return dataByTaskId.removeValue(forKey: taskId) ?? Data()
+    }
+}
+
+private struct PreparedChunkUpload: Sendable {
+    let summary: ScanMetadataDatabase.ChunkSnapshotSummary
+    let zipByteCount: Int64?
+    let multipartURL: URL
+}
+
 /// URLSession background config 기반 chunk upload 큐.
 /// ADR D4 — background URLSession + 디스크 cap + 재시도 정책.
 ///
@@ -25,8 +48,11 @@ final class ChunkUploadQueue: NSObject {
     private(set) var manifests: [UUID: ChunkManifest] = [:]   // key: scanSessionId+chunkIndex 대리 = chunkSessionId (사용 단순화를 위해 zipURL UUID 사용)
     private var chunkIdByTaskId: [Int: UUID] = [:]             // URLSession taskIdentifier → chunk zip UUID
     private var zipURLByChunkId: [UUID: URL] = [:]
+    private var multipartURLByChunkId: [UUID: URL] = [:]
+    private nonisolated let responseBuffer = ChunkUploadResponseBuffer()
 
     weak var observer: ChunkUploadObserver?
+    var onChunkUploaded: ((UUID) -> Void)?
 
     private var backgroundSession: URLSession?
     private var backgroundCompletionHandler: (() -> Void)?
@@ -93,6 +119,7 @@ final class ChunkUploadQueue: NSObject {
         }
 
         let chunkSessionId = UUID()
+        let chunkScanId = chunkSessionId.uuidString
         let zipURL = ScanFileStore.chunkZipURL(chunkSessionId: chunkSessionId)
         let manifestURL = ScanFileStore.chunkManifestURL(chunkSessionId: chunkSessionId)
 
@@ -101,28 +128,39 @@ final class ChunkUploadQueue: NSObject {
         var updatedManifest = manifest
         updatedManifest.uploadState = .archiving
         updatedManifest.zipPath = zipURL.path
+        updatedManifest.uploadScanId = chunkScanId
         manifests[chunkSessionId] = updatedManifest
         zipURLByChunkId[chunkSessionId] = zipURL
         observer?.didUpdate(queue: manifests)
 
         Self.logger.info("enqueue chunk \(manifest.chunkIndex) archiving... dir=\(chunkDirectory.lastPathComponent)")
 
-        // background archive
+        let uploadURL = buildUploadURL(floorId: manifest.floorId)
+        let boundary = "Boundary-\(UUID().uuidString)"
+        let prepared: PreparedChunkUpload
         do {
-            try await archiver.archive(
-                scanDirectory: chunkDirectory,
-                destination: zipURL,
-                scanId: "chunk_\(chunkSessionId.uuidString)",
-                progress: { _ in }
+            prepared = try await prepareChunkUploadFiles(
+                chunkDirectory: chunkDirectory,
+                chunkScanId: chunkScanId,
+                manifest: updatedManifest,
+                zipURL: zipURL,
+                boundary: boundary,
+                chunkSessionId: chunkSessionId
             )
         } catch {
             updatedManifest.uploadState = .failed
             updatedManifest.lastError = error.localizedDescription
             manifests[chunkSessionId] = updatedManifest
             observer?.didUpdate(queue: manifests)
-            Self.logger.error("enqueue: archive failed: \(error)")
+            Self.logger.error("enqueue: archive preparation failed: \(error)")
             throw error
         }
+
+        Self.logger.info("enqueue: chunk sidecar normalized scanId=\(prepared.summary.scanId) keyframes=\(prepared.summary.keyframeCount) branches=\(prepared.summary.branchMarkCount) edges=\(prepared.summary.branchEdgeCount)")
+        updatedManifest.archivedKeyframeCount = prepared.summary.keyframeCount
+        updatedManifest.archivedBranchMarkCount = prepared.summary.branchMarkCount
+        updatedManifest.archivedBranchEdgeCount = prepared.summary.branchEdgeCount
+        updatedManifest.zipByteCount = prepared.zipByteCount
 
         // manifest 저장
         let encoder = JSONEncoder()
@@ -138,12 +176,15 @@ final class ChunkUploadQueue: NSObject {
             throw ChunkUploadError.sessionUnavailable
         }
 
-        let uploadURL = buildUploadURL(floorId: manifest.floorId)
-        let request = buildUploadRequest(url: uploadURL, zipURL: zipURL, manifest: updatedManifest)
-        let task = session.uploadTask(with: request, fromFile: zipURL)
+        let multipartURL = prepared.multipartURL
+        multipartURLByChunkId[chunkSessionId] = multipartURL
+        let request = buildUploadRequest(url: uploadURL, bodyURL: multipartURL, boundary: boundary)
+        let task = session.uploadTask(with: request, fromFile: multipartURL)
         chunkIdByTaskId[task.taskIdentifier] = chunkSessionId
 
         updatedManifest.uploadState = .uploading
+        updatedManifest.uploadStartedAt = .now
+        updatedManifest.lastHTTPStatus = nil
         manifests[chunkSessionId] = updatedManifest
         observer?.didUpdate(queue: manifests)
 
@@ -208,22 +249,56 @@ final class ChunkUploadQueue: NSObject {
               manifest.uploadState == .failed || manifest.uploadState == .expired,
               manifest.retryCount < Self.maxRetryCount,
               let zipURL = zipURLByChunkId[chunkSessionId],
-              FileManager.default.fileExists(atPath: zipURL.path),
-              let session = backgroundSession else { return }
+              FileManager.default.fileExists(atPath: zipURL.path) else { return }
 
         manifest.retryCount += 1
         manifest.uploadState = .uploading
         manifest.lastError = nil
+        manifest.uploadStartedAt = .now
+        manifest.uploadCompletedAt = nil
+        manifest.lastHTTPStatus = nil
         manifests[chunkSessionId] = manifest
         observer?.didUpdate(queue: manifests)
 
-        let uploadURL = buildUploadURL(floorId: manifest.floorId)
-        let request = buildUploadRequest(url: uploadURL, zipURL: zipURL, manifest: manifest)
-        let task = session.uploadTask(with: request, fromFile: zipURL)
-        chunkIdByTaskId[task.taskIdentifier] = chunkSessionId
-        task.resume()
+        Task { @MainActor in
+            let uploadURL = self.buildUploadURL(floorId: manifest.floorId)
+            let boundary = "Boundary-\(UUID().uuidString)"
+            let scanId = manifest.uploadScanId ?? chunkSessionId.uuidString
 
-        Self.logger.info("retryChunk: chunkIndex=\(manifest.chunkIndex) retryCount=\(manifest.retryCount)")
+            let multipartURL: URL
+            do {
+                multipartURL = try await self.makeMultipartBodyFile(
+                    zipURL: zipURL,
+                    scanId: scanId,
+                    boundary: boundary,
+                    chunkSessionId: chunkSessionId
+                )
+            } catch {
+                guard var failedManifest = self.manifests[chunkSessionId] else { return }
+                failedManifest.uploadState = .failed
+                failedManifest.lastError = "multipart body 생성 실패: \(error.localizedDescription)"
+                self.manifests[chunkSessionId] = failedManifest
+                self.observer?.didUpdate(queue: self.manifests)
+                return
+            }
+
+            guard let session = self.backgroundSession else {
+                guard var failedManifest = self.manifests[chunkSessionId] else { return }
+                failedManifest.uploadState = .failed
+                failedManifest.lastError = ChunkUploadError.sessionUnavailable.localizedDescription
+                self.manifests[chunkSessionId] = failedManifest
+                self.observer?.didUpdate(queue: self.manifests)
+                return
+            }
+
+            self.multipartURLByChunkId[chunkSessionId] = multipartURL
+            let request = self.buildUploadRequest(url: uploadURL, bodyURL: multipartURL, boundary: boundary)
+            let task = session.uploadTask(with: request, fromFile: multipartURL)
+            self.chunkIdByTaskId[task.taskIdentifier] = chunkSessionId
+            task.resume()
+
+            Self.logger.info("retryChunk: chunkIndex=\(manifest.chunkIndex) retryCount=\(manifest.retryCount)")
+        }
     }
 
     func deleteChunk(chunkSessionId: UUID) {
@@ -233,9 +308,21 @@ final class ChunkUploadQueue: NSObject {
         if let zipURL = zipURLByChunkId[chunkSessionId] {
             try? FileManager.default.removeItem(at: zipURL)
         }
+        if let multipartURL = multipartURLByChunkId[chunkSessionId] {
+            try? FileManager.default.removeItem(at: multipartURL)
+        }
+        try? FileManager.default.removeItem(at: ScanFileStore.chunkManifestURL(chunkSessionId: chunkSessionId))
         manifests.removeValue(forKey: chunkSessionId)
         zipURLByChunkId.removeValue(forKey: chunkSessionId)
+        multipartURLByChunkId.removeValue(forKey: chunkSessionId)
         observer?.didUpdate(queue: manifests)
+    }
+
+    func deleteFailedAndExpiredChunks() {
+        let ids = manifests.compactMap { id, manifest in
+            manifest.uploadState == .failed || manifest.uploadState == .expired ? id : nil
+        }
+        ids.forEach { deleteChunk(chunkSessionId: $0) }
     }
 
     // MARK: - Background session completion handler
@@ -250,17 +337,158 @@ final class ChunkUploadQueue: NSObject {
         serverClient.chunkUploadURL(floorId: floorId)
     }
 
-    private func buildUploadRequest(url: URL, zipURL: URL, manifest: ChunkManifest) -> URLRequest {
-        let boundary = "Boundary-\(UUID().uuidString)"
+    private func buildUploadRequest(url: URL, bodyURL: URL, boundary: String) -> URLRequest {
         var request = serverClient.authorizedChunkRequest(url: url, boundary: boundary)
         request.httpMethod = "POST"
+        if let size = try? FileManager.default.attributesOfItem(atPath: bodyURL.path)[.size] as? NSNumber {
+            request.setValue("\(size.int64Value)", forHTTPHeaderField: "Content-Length")
+        }
         return request
+    }
+
+    private func prepareChunkUploadFiles(
+        chunkDirectory: URL,
+        chunkScanId: String,
+        manifest: ChunkManifest,
+        zipURL: URL,
+        boundary: String,
+        chunkSessionId: UUID
+    ) async throws -> PreparedChunkUpload {
+        let archiver = self.archiver
+        let queue = archiveQueue
+        let appShortVersion = Self.appShortVersion
+        return try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                do {
+                    let summary = try Self.prepareChunkArchiveMetadata(
+                        chunkDirectory: chunkDirectory,
+                        chunkScanId: chunkScanId,
+                        manifest: manifest,
+                        appShortVersion: appShortVersion
+                    )
+                    try archiver.archiveBlocking(
+                        scanDirectory: chunkDirectory,
+                        destination: zipURL,
+                        scanId: chunkScanId,
+                        progress: { _ in }
+                    )
+                    let multipartURL = try Self.buildMultipartBodyFile(
+                        zipURL: zipURL,
+                        scanId: chunkScanId,
+                        boundary: boundary,
+                        chunkSessionId: chunkSessionId
+                    )
+                    continuation.resume(returning: PreparedChunkUpload(
+                        summary: summary,
+                        zipByteCount: Self.zipByteCount(at: zipURL),
+                        multipartURL: multipartURL
+                    ))
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    nonisolated private static func prepareChunkArchiveMetadata(
+        chunkDirectory: URL,
+        chunkScanId: String,
+        manifest: ChunkManifest,
+        appShortVersion: String
+    ) throws -> ScanMetadataDatabase.ChunkSnapshotSummary {
+        let endedAt = manifest.endedAt ?? .now
+        let snapshotURL = chunkDirectory.appendingPathComponent("scan_metadata.db")
+        let summary = try ScanMetadataDatabase.prepareChunkSnapshot(
+            at: snapshotURL,
+            chunkScanId: chunkScanId,
+            startedAt: manifest.startedAt,
+            endedAt: endedAt
+        )
+        let chunkManifest = ManifestWriter.makeChunkLiveRtabmap(
+            scanId: chunkScanId,
+            sidecarKeyframeMetaCount: summary.keyframeCount,
+            clientAppVersion: appShortVersion
+        )
+        _ = try ManifestWriter.write(scanDirectory: chunkDirectory, manifest: chunkManifest)
+        return summary
+    }
+
+    nonisolated private static var appShortVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0"
+    }
+
+    nonisolated private static func zipByteCount(at url: URL) -> Int64? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value
+    }
+
+    private func makeMultipartBodyFile(
+        zipURL: URL,
+        scanId: String,
+        boundary: String,
+        chunkSessionId: UUID
+    ) async throws -> URL {
+        let queue = archiveQueue
+        return try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                do {
+                    let url = try Self.buildMultipartBodyFile(
+                        zipURL: zipURL,
+                        scanId: scanId,
+                        boundary: boundary,
+                        chunkSessionId: chunkSessionId
+                    )
+                    continuation.resume(returning: url)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    nonisolated private static func buildMultipartBodyFile(
+        zipURL: URL,
+        scanId: String,
+        boundary: String,
+        chunkSessionId: UUID
+    ) throws -> URL {
+        let bodyURL = ScanFileStore.chunkMultipartURL(chunkSessionId: chunkSessionId)
+        let fm = FileManager.default
+        if fm.fileExists(atPath: bodyURL.path) {
+            try fm.removeItem(at: bodyURL)
+        }
+        _ = fm.createFile(atPath: bodyURL.path, contents: nil)
+
+        let out = try FileHandle(forWritingTo: bodyURL)
+        defer { try? out.close() }
+
+        func writeString(_ value: String) {
+            out.write(Data(value.utf8))
+        }
+
+        writeString("--\(boundary)\r\n")
+        writeString("Content-Disposition: form-data; name=\"scan_id\"\r\n\r\n")
+        writeString("\(scanId)\r\n")
+
+        writeString("--\(boundary)\r\n")
+        writeString("Content-Disposition: form-data; name=\"file\"; filename=\"\(zipURL.lastPathComponent)\"\r\n")
+        writeString("Content-Type: application/zip\r\n\r\n")
+
+        let input = try FileHandle(forReadingFrom: zipURL)
+        defer { try? input.close() }
+        while true {
+            let chunk = try input.read(upToCount: 1 << 20) ?? Data()
+            if chunk.isEmpty { break }
+            out.write(chunk)
+        }
+
+        writeString("\r\n--\(boundary)--\r\n")
+        return bodyURL
     }
 }
 
 // MARK: - URLSessionDelegate
 
-extension ChunkUploadQueue: URLSessionDelegate, URLSessionTaskDelegate {
+extension ChunkUploadQueue: URLSessionDelegate, URLSessionTaskDelegate, URLSessionDataDelegate {
 
     nonisolated func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
         Task { @MainActor in
@@ -271,15 +499,22 @@ extension ChunkUploadQueue: URLSessionDelegate, URLSessionTaskDelegate {
         }
     }
 
+    nonisolated func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        responseBuffer.append(data, taskId: dataTask.taskIdentifier)
+    }
+
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         let taskId = task.taskIdentifier
         let statusCode = (task.response as? HTTPURLResponse)?.statusCode ?? -1
+        let responseData = responseBuffer.take(taskId: taskId)
 
         Task { @MainActor in
             guard let chunkSessionId = self.chunkIdByTaskId[taskId] else { return }
             self.chunkIdByTaskId.removeValue(forKey: taskId)
 
             guard var manifest = self.manifests[chunkSessionId] else { return }
+            manifest.lastHTTPStatus = statusCode > 0 ? statusCode : nil
+            manifest.uploadCompletedAt = .now
 
             if let error {
                 // 네트워크 오류
@@ -294,13 +529,26 @@ extension ChunkUploadQueue: URLSessionDelegate, URLSessionTaskDelegate {
                     Self.logger.warning("chunk \(manifest.chunkIndex) upload error (retry \(manifest.retryCount)): \(error)")
                 }
             } else if statusCode == 200 || statusCode == 201 {
-                manifest.uploadState = .done
-                manifest.lastError = nil
-                // 업로드 성공 시 로컬 zip 삭제
-                if let zipURL = self.zipURLByChunkId[chunkSessionId] {
-                    try? FileManager.default.removeItem(at: zipURL)
+                do {
+                    let uploaded = try JSONDecoder().decode(V1ScanChunk.self, from: responseData)
+                    manifest.serverChunkId = uploaded.chunkId
+                    manifest.uploadState = .done
+                    manifest.lastError = nil
+                    // 업로드 성공 시 로컬 zip/body 삭제
+                    if let zipURL = self.zipURLByChunkId[chunkSessionId] {
+                        try? FileManager.default.removeItem(at: zipURL)
+                    }
+                    if let multipartURL = self.multipartURLByChunkId[chunkSessionId] {
+                        try? FileManager.default.removeItem(at: multipartURL)
+                    }
+                    try? FileManager.default.removeItem(at: ScanFileStore.chunkManifestURL(chunkSessionId: chunkSessionId))
+                    self.onChunkUploaded?(manifest.floorId)
+                    Self.logger.info("chunk \(manifest.chunkIndex) upload done. statusCode=\(statusCode) serverChunkId=\(uploaded.chunkId.uuidString)")
+                } catch {
+                    manifest.uploadState = .failed
+                    manifest.lastError = "서버 응답 파싱 실패: \(error.localizedDescription)"
+                    Self.logger.error("chunk \(manifest.chunkIndex) response decode failed: \(error)")
                 }
-                Self.logger.info("chunk \(manifest.chunkIndex) upload done. statusCode=\(statusCode)")
             } else {
                 manifest.uploadState = .failed
                 manifest.lastError = "서버 오류: HTTP \(statusCode)"

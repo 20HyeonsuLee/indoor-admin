@@ -349,7 +349,7 @@ struct IndoorServerV1Client {
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.setValue(String(bodyData.count), forHTTPHeaderField: "Content-Length")
 
-        let (data, response) = try await session.upload(for: request, from: bodyData)
+        let (data, response) = try await upload(for: request, from: bodyData)
         try checkHTTP(data: data, response: response)
         return try decode(V1ScanChunk.self, from: data)
     }
@@ -411,7 +411,7 @@ struct IndoorServerV1Client {
     // MARK: - Private HTTP helpers
 
     private func get<T: Decodable>(url: URL) async throws -> T {
-        let (data, response) = try await session.data(for: authorizedRequest(url: url))
+        let (data, response) = try await data(for: authorizedRequest(url: url))
         try checkHTTP(data: data, response: response)
         return try decode(T.self, from: data)
     }
@@ -421,7 +421,7 @@ struct IndoorServerV1Client {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await data(for: request)
         try checkHTTP(data: data, response: response)
         return try decode(Response.self, from: data)
     }
@@ -429,7 +429,7 @@ struct IndoorServerV1Client {
     private func postEmpty<Response: Decodable>(url: URL) async throws -> Response {
         var request = authorizedRequest(url: url)
         request.httpMethod = "POST"
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await data(for: request)
         try checkHTTP(data: data, response: response)
         return try decode(Response.self, from: data)
     }
@@ -439,7 +439,7 @@ struct IndoorServerV1Client {
         request.httpMethod = "PUT"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await data(for: request)
         try checkHTTP(data: data, response: response)
         return try decode(Response.self, from: data)
     }
@@ -447,11 +447,66 @@ struct IndoorServerV1Client {
     private func delete(url: URL) async throws {
         var request = authorizedRequest(url: url)
         request.httpMethod = "DELETE"
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await data(for: request)
         guard let http = response as? HTTPURLResponse else { return }
         guard (200..<300).contains(http.statusCode) else {
             throw makeHTTPError(status: http.statusCode, data: data)
         }
+    }
+
+    private func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        logRequest(request, bodyBytes: request.httpBody?.count)
+        do {
+            let (data, response) = try await session.data(for: request)
+            logResponse(request: request, response: response, dataBytes: data.count)
+            return (data, response)
+        } catch {
+            logTransportError(request: request, error: error)
+            throw error
+        }
+    }
+
+    private func upload(for request: URLRequest, from bodyData: Data) async throws -> (Data, URLResponse) {
+        logRequest(request, bodyBytes: bodyData.count)
+        do {
+            let (data, response) = try await session.upload(for: request, from: bodyData)
+            logResponse(request: request, response: response, dataBytes: data.count)
+            return (data, response)
+        } catch {
+            logTransportError(request: request, error: error)
+            throw error
+        }
+    }
+
+    private func logRequest(_ request: URLRequest, bodyBytes: Int?) {
+        let method = request.httpMethod ?? "GET"
+        let urlText = request.url?.absoluteString ?? "<nil>"
+        let bodyText = bodyBytes.map { " bodyBytes=\($0)" } ?? ""
+        log("[IndoorServerV1Client] request method=\(method) url=\(urlText)\(bodyText)")
+    }
+
+    private func logResponse(request: URLRequest, response: URLResponse, dataBytes: Int) {
+        let method = request.httpMethod ?? "GET"
+        let urlText = request.url?.absoluteString ?? "<nil>"
+        guard let http = response as? HTTPURLResponse else {
+            log("[IndoorServerV1Client] response method=\(method) nonHTTP url=\(urlText) bytes=\(dataBytes)")
+            return
+        }
+        log("[IndoorServerV1Client] response method=\(method) status=\(http.statusCode) url=\(urlText) bytes=\(dataBytes)")
+    }
+
+    private func logTransportError(request: URLRequest, error: Error) {
+        let method = request.httpMethod ?? "GET"
+        let urlText = request.url?.absoluteString ?? "<nil>"
+        if let urlError = error as? URLError {
+            log("[IndoorServerV1Client] transportError method=\(method) url=\(urlText) code=\(urlError.code.rawValue) description=\(urlError.localizedDescription)")
+            return
+        }
+        log("[IndoorServerV1Client] transportError method=\(method) url=\(urlText) error=\(error.localizedDescription)")
+    }
+
+    private func log(_ message: String) {
+        NSLog("%@", message)
     }
 
     private func checkHTTP(data: Data, response: URLResponse) throws {

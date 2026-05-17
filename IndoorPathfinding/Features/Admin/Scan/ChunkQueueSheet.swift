@@ -23,15 +23,19 @@ struct ChunkQueueSheet: View {
         NavigationStack {
             Group {
                 if observer.manifests.isEmpty {
-                    ContentUnavailableView(
-                        "업로드 대기열 없음",
-                        systemImage: "tray",
-                        description: Text("스캔 중 chunk가 생성되면 여기에 표시됩니다.")
-                    )
+                    List {
+                        queueSummarySection
+                        ContentUnavailableView(
+                            "업로드 대기열 없음",
+                            systemImage: "tray",
+                            description: Text("스캔 중 chunk가 생성되면 여기에 표시됩니다.")
+                        )
+                    }
                 } else {
                     List {
+                        queueSummarySection
                         ForEach(sortedManifests, id: \.0) { chunkId, manifest in
-                            ChunkQueueRow(chunkId: chunkId, manifest: manifest)
+                            ChunkQueueRow(chunkId: chunkId, manifest: manifest, queue: queue)
                                 .swipeActions(edge: .leading, allowsFullSwipe: true) {
                                     retryButton(chunkId: chunkId, manifest: manifest)
                                 }
@@ -52,6 +56,28 @@ struct ChunkQueueSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    private var queueSummarySection: some View {
+        Section("요약") {
+            LabeledContent("전체", value: "\(observer.totalCount)")
+            LabeledContent("완료", value: "\(observer.doneCount)")
+            LabeledContent("압축 중", value: "\(observer.archivingCount)")
+            LabeledContent("대기", value: "\(observer.queuedCount)")
+            LabeledContent("업로드 중", value: "\(observer.uploadingCount)")
+            LabeledContent("실패", value: "\(observer.failedCount)")
+                .foregroundStyle(observer.failedCount > 0 ? .red : .primary)
+            LabeledContent("만료", value: "\(observer.expiredCount)")
+                .foregroundStyle(observer.expiredCount > 0 ? .orange : .primary)
+            LabeledContent("ZIP 내부 keyframe", value: "\(observer.archivedKeyframeTotal)")
+            if observer.failedCount + observer.expiredCount > 0, let queue {
+                Button(role: .destructive) {
+                    queue.deleteFailedAndExpiredChunks()
+                } label: {
+                    Label("실패/만료 항목 삭제", systemImage: "trash")
+                }
+            }
+        }
     }
 
     // MARK: - Swipe Actions (ADR D5)
@@ -91,6 +117,7 @@ struct ChunkQueueSheet: View {
 private struct ChunkQueueRow: View {
     let chunkId: UUID
     let manifest: ChunkManifest
+    let queue: ChunkUploadQueue?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -104,13 +131,22 @@ private struct ChunkQueueRow: View {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.red)
-                    .lineLimit(2)
+                    .lineLimit(4)
             }
             if manifest.overlapWarning {
                 Label("overlap keyframe 부족 (merge 품질 위험)", systemImage: "exclamationmark.triangle")
                     .font(.caption2)
                     .foregroundStyle(.orange)
             }
+            VStack(alignment: .leading, spacing: 2) {
+                Text("frames \(intText(manifest.archivedKeyframeCount)) · branches \(intText(manifest.archivedBranchMarkCount)) · edges \(intText(manifest.archivedBranchEdgeCount))")
+                Text("zip \(formattedBytes(manifest.zipByteCount)) · scan \(shortId(manifest.uploadScanId))")
+                if let status = manifest.lastHTTPStatus {
+                    Text("HTTP \(status)")
+                }
+            }
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.secondary)
             HStack {
                 Text(manifest.startedAt, style: .time)
                     .font(.caption2)
@@ -121,8 +157,24 @@ private struct ChunkQueueRow: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            actionButtons
         }
         .padding(.vertical, 2)
+    }
+
+    private func formattedBytes(_ bytes: Int64?) -> String {
+        guard let bytes else { return "-" }
+        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    private func intText(_ value: Int?) -> String {
+        guard let value else { return "-" }
+        return "\(value)"
+    }
+
+    private func shortId(_ value: String?) -> String {
+        guard let value, !value.isEmpty else { return "-" }
+        return String(value.prefix(8))
     }
 
     @ViewBuilder
@@ -155,6 +207,36 @@ private struct ChunkQueueRow: View {
             Label("만료", systemImage: "clock.badge.xmark")
                 .font(.caption)
                 .foregroundStyle(.gray)
+        }
+    }
+
+    @ViewBuilder
+    private var actionButtons: some View {
+        let isRetryable = manifest.uploadState == .failed || manifest.uploadState == .expired
+        let isDeletable = manifest.uploadState == .done || isRetryable
+        if queue != nil && (isRetryable || isDeletable) {
+            HStack(spacing: 8) {
+                if isRetryable {
+                    Button {
+                        queue?.retryChunk(chunkSessionId: chunkId)
+                    } label: {
+                        Label("재시도", systemImage: "arrow.counterclockwise")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(.orange)
+                }
+                if isDeletable {
+                    Button(role: .destructive) {
+                        queue?.deleteChunk(chunkSessionId: chunkId)
+                    } label: {
+                        Label("삭제", systemImage: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+            .padding(.top, 4)
         }
     }
 }

@@ -24,7 +24,7 @@ final class KeyframeCaptureThrottle {
     private(set) var isAggressiveMode: Bool = false
 
     /// aggressive mode에서 사용할 완화된 파라미터.
-    private static let aggressiveInterval: TimeInterval = 0.1   // 10 Hz
+    private static let aggressiveInterval: TimeInterval = 0.2   // 5 Hz
     private static let aggressiveDistance: Float = 0.05          // 5 cm
 
     /// pause 상태. true이면 모든 frame을 drop한다.

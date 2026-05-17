@@ -19,16 +19,48 @@ final class ScanStore {
     /// POI 마킹 상태 머신.
     /// - idle: 기본 상태. bbox 탭 대기.
     /// - tracking(trackId, photos): track 잠금 + 사진 수집 중. photos.isEmpty → 사진 0장.
-    /// - manualPhotoTaken(photo): Sprint 14 수동 모드. 사진 1장 찍고 이동 중.
+    /// - manualPositionSelected(placement): 화면 탭으로 POI 위치 선택 완료. 사진 버튼 대기.
     /// - confirming(origin): DB write in-flight. origin으로 실패 시 복구 경로 추적.
     enum POIMarkMode: Equatable {
         case idle
-        case manualPhotoTaken(photo: PendingPhoto)                  // Sprint 14: 사진 찍고 이동 중
+        case manualPositionSelected(placement: PendingPlacement)
         case confirming(origin: ConfirmOrigin)                      // DB write in-flight
 
         /// confirming 실패 시 복구 경로.
         enum ConfirmOrigin: Equatable {
-            case manual(photo: PendingPhoto)
+            case manual(placement: PendingPlacement, photo: PendingPhoto)
+        }
+    }
+
+    /// 화면 탭 → ARRaycast로 얻은 바닥 위 마킹 후보.
+    /// DB 저장 시 이 transform을 mark 위치로 쓰고, keyframeTransform 대비 local delta를 계산한다.
+    struct PendingPlacement: Equatable, Sendable {
+        let id: UUID
+        let transform: simd_float4x4
+        let keyframeSeq: Int
+        let keyframeTransform: simd_float4x4
+        let temporaryVisualId: UUID?
+
+        init(
+            id: UUID = UUID(),
+            transform: simd_float4x4,
+            keyframeSeq: Int,
+            keyframeTransform: simd_float4x4,
+            temporaryVisualId: UUID? = nil
+        ) {
+            self.id = id
+            self.transform = transform
+            self.keyframeSeq = keyframeSeq
+            self.keyframeTransform = keyframeTransform
+            self.temporaryVisualId = temporaryVisualId
+        }
+
+        var position: SIMD3<Float> {
+            SIMD3<Float>(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z)
+        }
+
+        static func == (lhs: PendingPlacement, rhs: PendingPlacement) -> Bool {
+            lhs.id == rhs.id
         }
     }
 
@@ -142,15 +174,11 @@ final class ScanStore {
     // MARK: - Published State
 
     private(set) var phase: Phase = .idle
+    private(set) var capturedFrameCount: Int = 0
     private(set) var keyframeCount: Int = 0
     private(set) var poiMarkCount: Int = 0
     private(set) var branchMarkCount: Int = 0
     private(set) var trackingStateLabel: String = "notAvailable"
-    /// Sprint 95: 빠른걸음 감지 — angular velocity 0.6 rad/s 0.3s sustained.
-    /// ARKit `excessiveMotion` 도달 *전*에 미리 사용자 경고. UI 적색 보더 + haptic 트리거.
-    private(set) var fastMotion: Bool = false
-    /// 5-frame moving average angular velocity (rad/s). UI/디버그 노출.
-    private(set) var angularVelocityRadPerSec: Float = 0
     private(set) var currentTranslation: SIMD3<Float>?
     private(set) var coveragePoints: [CGPoint] = []
     private(set) var interfloorMarks: [InterfloorMark] = []
@@ -186,6 +214,8 @@ final class ScanStore {
 
     /// in-memory 노드/에지 그래프 + 전이 룰 단일 SoT.
     private(set) var markingState: MarkingState = MarkingState()
+    /// proximity 연결 모드에서 사용자가 먼저 탭한 corridor 후보 위치.
+    private(set) var pendingCorridorPlacement: PendingPlacement?
 
     // MARK: - Floor Reference (Sprint 88 Cycle 4)
 
@@ -220,23 +250,24 @@ final class ScanStore {
     private(set) var dbSizeBytes: Int64 = 0
     var interfloorMarkCount: Int { interfloorMarks.count }
 
-    // MARK: - Chunked scan state (ADR D1/D5)
+    // MARK: - Streaming scan state (ADR 0003)
 
-    /// 현재 활성 chunk 인덱스 (0-based).
-    private(set) var currentChunkIndex: Int = 0
-    /// 현재 chunk 시작 시각.
-    private(set) var currentChunkStartedAt: Date = .now
-    /// scan session 전체를 묶는 client-side UUID.
-    private(set) var scanSessionId: UUID = UUID()
-    /// chunk upload 상태 구독용 Observable. ScanSessionView badge/ChunkQueueSheet가 구독.
-    /// ADR D7: AdminFloorDetailView가 소유하는 observer를 외부에서 주입 가능.
-    let chunkUploadObserver: ChunkUploadObserver
-
-    /// ChunkRolloverScheduler. nil이면 chunk 기능 비활성 (serverClient 없음).
-    private var chunkRolloverScheduler: ChunkRolloverScheduler?
-    /// ChunkUploadQueue. nil이면 chunk 기능 비활성.
-    /// ADR D5: ChunkQueueSheet가 retry/delete swipe action을 위해 접근한다.
-    private(set) var chunkUploadQueue: ChunkUploadQueue?
+    /// streaming push 진행 상황. UI badge "전송 N/M"의 N.
+    private(set) var streamingLastConfirmedNodeId: Int = 0
+    /// streaming 활성 여부 (serverClient 있을 때 true).
+    private(set) var isStreamingActive: Bool = false
+    /// streaming push 서비스. nil이면 streaming 비활성.
+    private var pushService: StreamingPushService?
+    /// streaming API 클라이언트. nil이면 streaming 비활성.
+    private var streamingClient: StreamingScanClient?
+    /// 서버에서 발급받은 scan session ID.
+    private(set) var serverScanId: String?
+    /// finalize 성공 후 true — "스캔 빌드" 버튼 활성 조건.
+    private(set) var isFinalizeComplete: Bool = false
+    /// push 오류 메시지 (non-fatal, UI 노출용).
+    private(set) var pushErrorMessage: String?
+    /// push 태스크 소유. drain/stop 시 취소 경로.
+    private var pushLoopTask: Task<Void, Never>?
 
     // MARK: - Internals
 
@@ -269,19 +300,6 @@ final class ScanStore {
     private var lastPersistedKeyframeSeq: Int = 0
     private var lastPersistedKeyframeTransform: simd_float4x4 = matrix_identity_float4x4
     private var visibleBranchNodeIds: Set<BranchMarkNodeId> = []
-    /// Sprint 95: 직전 frame transform/timestamp — angular velocity 측정용.
-    private var prevTransformForVelocity: simd_float4x4?
-    private var prevTimestampForVelocity: TimeInterval = 0
-    private var angularVelocityWindow: [Float] = []
-    private static let angularVelocityWindowSize = 5
-    private var fastMotionAboveSince: TimeInterval = 0
-    private var fastMotionBelowSince: TimeInterval = 0
-    /// 빠른걸음 enter threshold (rad/s) — 0.6 sustain 0.3s.
-    private static let fastMotionEnterThreshold: Float = 0.6
-    private static let fastMotionEnterSustainSec: TimeInterval = 0.3
-    /// exit hysteresis — 0.4 미만 0.5s.
-    private static let fastMotionExitThreshold: Float = 0.4
-    private static let fastMotionExitSustainSec: TimeInterval = 0.5
     /// manifest v7 intrinsics (세션 첫 frame 에서 캡처).
     private var lastIntrinsicsFx: Float = 0
     private var lastIntrinsicsFy: Float = 0
@@ -305,12 +323,7 @@ final class ScanStore {
             return RTABMapBridge()
             #endif
         }(),
-        serverClient: IndoorServerV1Client? = nil,
-        /// ADR D7: caller가 소유하는 observer를 주입. nil이면 내부 생성.
-        /// AdminFloorDetailView가 소유한 observer를 주입하면 ScanSessionView dismiss 후에도
-        /// observer 상태가 유지되어 merge 버튼 disable 조건에 사용할 수 있다.
-        externalChunkUploadObserver: ChunkUploadObserver? = nil,
-        externalChunkUploadQueue: ChunkUploadQueue? = nil
+        serverClient: IndoorServerV1Client? = nil
     ) {
         let id = UUID().uuidString
         self.scanId = id
@@ -318,22 +331,22 @@ final class ScanStore {
         self.fileStore = ScanFileStore(scanId: id)
         self.sessionManager = sessionManager
         self.slamSink = slamSink
-        // ADR D7: externalChunkUploadObserver가 주입되면 그것을 사용, 아니면 내부 생성.
-        self.chunkUploadObserver = externalChunkUploadObserver ?? ChunkUploadObserver()
         // 모든 저장 프로퍼티 초기화 완료 후 self 사용 가능
         self.sessionManager.delegate = nil
         // RTABMapBridge에 statsModel 연결.
         #if !targetEnvironment(simulator)
         (slamSink as? RTABMapBridge)?.statsListener = statsModel
         #endif
-        // ChunkUploadQueue 초기화. floor 화면이 queue를 소유하면 dismiss 후에도 상태가 유지된다.
-        if let externalChunkUploadQueue {
-            self.chunkUploadQueue = externalChunkUploadQueue
-            externalChunkUploadQueue.observer = chunkUploadObserver
-        } else if let serverClient {
-            let queue = ChunkUploadQueue(serverClient: serverClient)
-            self.chunkUploadQueue = queue
-            queue.observer = chunkUploadObserver
+        // streaming 클라이언트 구성 (serverClient가 있을 때만 활성).
+        if let serverClient {
+            self.streamingClient = StreamingScanClient(
+                baseURL: serverClient.baseURL,
+                token: serverClient.token
+            )
+            NSLog("[ScanStore-Streaming] init: streamingClient READY baseURL=%@ tokenLen=%d",
+                  serverClient.baseURL.absoluteString, serverClient.token.count)
+        } else {
+            NSLog("[ScanStore-Streaming] init: serverClient is NIL — streaming DISABLED")
         }
     }
 
@@ -348,6 +361,15 @@ final class ScanStore {
 
         try fileStore.createDirectories()
         visibleBranchNodeIds.removeAll()
+        capturedFrameCount = 0
+        keyframeCount = 0
+        pendingQueueCount = 0
+        streamingLastConfirmedNodeId = 0
+        isFinalizeComplete = false
+        serverScanId = nil
+        pushErrorMessage = nil
+        pendingCorridorPlacement = nil
+        markMode = .idle
 
         let database = try ScanMetadataDatabase(dbURL: fileStore.databaseURL)
         db = database
@@ -391,48 +413,59 @@ final class ScanStore {
 
         fanout = fanoutInstance
 
-        // RTABMapBridge 라이브 시작 — scanDirectory 안에 rtabmap.db 직접 생성.
+        // RTABMapBridge 라이브 시작 — scanDirectory 안에 rtabmap_working.db 직접 생성.
         // nodeIDListener를 self로 연결 → keyframe_meta.rtabmap_node_id UPDATE 활성.
         #if !targetEnvironment(simulator)
         if let bridge = slamSink as? RTABMapBridge {
             bridge.nodeIDListener = self
-            // chunked scan: chunk_0 디렉터리에 rtabmap.db를 생성한다.
-            let chunk0Dir = fileStore.chunkDirectory(chunkIndex: 0)
-            try FileManager.default.createDirectory(at: chunk0Dir, withIntermediateDirectories: true)
-            try bridge.start(scanURL: chunk0Dir)
+            try bridge.start(scanURL: fileStore.scanDirectory)
         }
         #else
-        // Simulator: RTABMapBridge 없음 — 기존 scanDirectory 사용.
+        // Simulator: RTABMapBridge 없음.
         _ = fileStore.scanDirectory
         #endif
 
-        // ChunkRolloverScheduler 시작 (uploadQueue가 있을 때만)
-        if let uploadQueue = chunkUploadQueue {
-            let bridge: any ChunkRolloverScheduler.BridgeProtocol
-            #if targetEnvironment(simulator)
-            bridge = StubChunkRolloverBridge()
-            #else
-            bridge = (slamSink as? RTABMapBridge) ?? StubChunkRolloverBridge()
-            #endif
-
-            let scheduler = ChunkRolloverScheduler(
-                scanSessionId: scanSessionId,
-                floorId: context.floorId,
-                fileStore: fileStore,
-                bridge: bridge,
-                throttle: CompositeChunkRolloverThrottle([slamThrottle, keyframeThrottle]),
-                uploadQueue: uploadQueue,
-                metadataSnapshotter: { [database, fileStore, storageQueue] chunkIndex in
-                    storageQueue.sync {}
-                    let snapshotURL = fileStore.scanMetadataSnapshotURL(chunkIndex: chunkIndex)
-                    try database.backup(to: snapshotURL)
-                },
-                onChunkClosed: { [weak self] chunkIndex in
-                    self?.pruneClosedChunkOverlay(chunkIndex: chunkIndex)
+        // streaming push 시작 (streamingClient가 있을 때만)
+        if let client = streamingClient {
+            isStreamingActive = true
+            let scanURL = fileStore.scanDirectory
+            let floorId = context.floorId
+            // 로컬 scanId 를 그대로 서버에 주입 → server-side scanId == local scanId.
+            // 이로써 scan_metadata.db 내부 scan_id 컬럼 / manifest.scan_id / path scanId
+            // 모두 일치 — 서버 sidecar_parser ScanIdMismatch 회피.
+            let injectScanId = UUID(uuidString: self.scanId)
+            NSLog("[ScanStore-Streaming] start: calling startScan floorId=%@ scanId=%@",
+                  floorId.uuidString, self.scanId)
+            // 서버에 scan session 개시 — Task로 비동기 호출
+            pushLoopTask = Task { [weak self] in
+                guard let self else { return }
+                do {
+                    let response = try await client.startScan(
+                        floorId: floorId,
+                        scanId: injectScanId
+                    )
+                    NSLog("[ScanStore-Streaming] startScan OK scanId=%@ state=%@",
+                          response.scanId, response.state)
+                    await MainActor.run { self.serverScanId = response.scanId }
+                    let service = StreamingPushService(
+                        client: client,
+                        scanId: response.scanId,
+                        scanURL: scanURL
+                    )
+                    await MainActor.run { self.pushService = service }
+                    NSLog("[ScanStore-Streaming] pushService READY — starting push loop")
+                    await service.startPushLoop()
+                    // push loop은 stopPushLoop() 호출 전까지 내부에서 반복
+                } catch {
+                    NSLog("[ScanStore-Streaming] startScan FAILED: %@", error.localizedDescription)
+                    await MainActor.run {
+                        self.pushErrorMessage = "스트리밍 시작 실패: \(error.localizedDescription)"
+                        self.isStreamingActive = false
+                    }
                 }
-            )
-            chunkRolloverScheduler = scheduler
-            try scheduler.start()
+            }
+        } else {
+            NSLog("[ScanStore-Streaming] start: streamingClient is NIL — no upload will happen")
         }
 
         // ARSession은 ARPreviewView.makeUIView에서 attach(session:)으로 연결.
@@ -463,20 +496,6 @@ final class ScanStore {
         visibleBranchNodeIds.removeAll()
         markARSceneOverlay.reset()
 
-        // ADR D1: scan stop 시 ChunkRolloverScheduler가 마지막 chunk를 flush한다.
-        if let scheduler = chunkRolloverScheduler {
-            phase = .finalizing
-            Task { [weak self, scheduler] in
-                await scheduler.stop()
-                await MainActor.run {
-                    guard let self, self.phase == .finalizing else { return }
-                    self.chunkRolloverScheduler = nil
-                    self.phase = .paused
-                }
-            }
-            return
-        }
-
         phase = .paused
     }
 
@@ -489,8 +508,15 @@ final class ScanStore {
     /// performPOIWrite / performManualPOIWrite 완료 핸들러는 W-1 재검증으로 무시된다.
     func cancelPOI() {
         switch markMode {
-        case .manualPhotoTaken, .confirming(.manual):
-            // 수동 모드: photo 폐기 후 .idle.
+        case .manualPositionSelected(let placement):
+            if let visualId = placement.temporaryVisualId {
+                markARSceneOverlay.removeStandaloneMark(id: visualId)
+            }
+            markMode = .idle
+        case .confirming(.manual(let placement, _)):
+            if let visualId = placement.temporaryVisualId {
+                markARSceneOverlay.removeStandaloneMark(id: visualId)
+            }
             markMode = .idle
         case .idle:
             break
@@ -517,21 +543,97 @@ final class ScanStore {
         markARSceneOverlay.syncEdges(visibleEdges, nodes: visibleNodes)
     }
 
-    private func pruneClosedChunkOverlay(chunkIndex: Int) {
-        visibleBranchNodeIds.removeAll()
-        markARSceneOverlay.reset()
-        NSLog("[ScanStore] pruned AR overlay for closed/uploading chunk %d", chunkIndex)
+
+    /// 화면 좌표를 바닥 위 world transform으로 변환하고, 같은 시점의 persisted keyframe을 함께 고정한다.
+    private func resolvePlacementAtScreenPoint(
+        _ screenPoint: CGPoint,
+        failureMessage: String,
+        completion: @escaping @MainActor (PendingPlacement) -> Void
+    ) {
+        guard phase == .recording else {
+            lastError = "스캔 중에만 위치를 지정할 수 있습니다."
+            return
+        }
+        guard trackingStateLabel == "normal" else {
+            lastError = "트래킹 상태가 정상일 때만 위치를 지정할 수 있습니다."
+            return
+        }
+        guard let keyframeRefAtRaycastStart = latestPersistedKeyframeForMark() else { return }
+
+        let floorY: Float = floorTracker.floorY
+            ?? floorTracker.handleFirstCorridorMark(cameraY: lastCapturedTransform.columns.3.y)
+
+        let raycastInvocation: (@escaping @MainActor (simd_float4x4?) -> Void) -> Void
+        if let view = sceneViewRef {
+            raycastInvocation = { completion in
+                ARRaycastHelper.raycast(from: screenPoint, in: view, floorY: floorY, completion: completion)
+            }
+        } else if let arSession = sessionManager.arSession {
+            raycastInvocation = { completion in
+                ARRaycastHelper.raycast(from: screenPoint, in: arSession, floorY: floorY, completion: completion)
+            }
+        } else {
+            lastError = "ARSession이 없습니다."
+            return
+        }
+
+        raycastInvocation { [weak self] transform in
+            guard let self else { return }
+            guard let transform else {
+                self.lastError = failureMessage
+                return
+            }
+            completion(PendingPlacement(
+                transform: transform,
+                keyframeSeq: keyframeRefAtRaycastStart.seq,
+                keyframeTransform: keyframeRefAtRaycastStart.transform
+            ))
+        }
     }
 
-    /// Sprint 14: 수동 POI 등록 시작. 현 frame을 즉시 캡처(셔터 역할).
-    /// 전제: markMode == .idle, phase == .recording, persisted keyframe 존재.
-    func startManualPOI() {
-        guard case .idle = markMode, phase == .recording else { return }
-        guard let keyframeRef = latestPersistedKeyframeForMark() else { return }
+    /// POI 위치 선택. 사진은 아직 저장하지 않고, 임시 AR marker만 표시한다.
+    func selectPOIPlacementAtScreenPoint(_ screenPoint: CGPoint) {
+        guard case .idle = markMode else { return }
+        resolvePlacementAtScreenPoint(
+            screenPoint,
+            failureMessage: "POI 위치 인식 실패 — 바닥을 다시 탭하세요."
+        ) { [weak self] placement in
+            guard let self, self.phase == .recording else { return }
+            let visualId = UUID()
+            var selected = placement
+            selected = PendingPlacement(
+                id: placement.id,
+                transform: placement.transform,
+                keyframeSeq: placement.keyframeSeq,
+                keyframeTransform: placement.keyframeTransform,
+                temporaryVisualId: visualId
+            )
+            self.markARSceneOverlay.addStandaloneMark(
+                id: visualId,
+                kind: .poi,
+                label: "POI 위치",
+                transform: selected.transform
+            )
+            self.markMode = .manualPositionSelected(placement: selected)
+            self.showMicroToast("POI 위치 선택됨")
+        }
+    }
 
-        // 수동 POI는 bbox 없이 manual photo만. (YOLO 폐기로 bbox 추출 경로 제거)
+    /// 과거 이름 호환: 위치 선택 없이 사진부터 찍는 흐름은 더 이상 사용하지 않는다.
+    /// 새 UX에서는 selectPOIPlacementAtScreenPoint(_:) 후 confirmManualPOI(label:)를 호출한다.
+    func startManualPOI() {
+        lastError = "먼저 화면에서 POI 위치를 탭하세요."
+    }
+
+    /// 선택된 POI 위치에 현재 카메라 이미지를 사진으로 붙여 저장한다.
+    func confirmManualPOI(label: String?) {
+        guard case .manualPositionSelected(let placement) = markMode else {
+            lastError = "먼저 화면에서 POI 위치를 탭하세요."
+            return
+        }
+        guard let photoKeyframeRef = latestPersistedKeyframeForMark() else { return }
         let photo = PendingPhoto(
-            keyframeSeq: keyframeRef.seq,
+            keyframeSeq: photoKeyframeRef.seq,
             capturedAt: nowMs(),
             bboxX: nil,
             bboxY: nil,
@@ -541,32 +643,9 @@ final class ScanStore {
             confidence: 0,
             imageBlob: lastJpegBlob
         )
-        markMode = .manualPhotoTaken(photo: photo)
-    }
-
-    /// Sprint 14: 수동 POI 확정. 확정 시점 pose를 poi_mark에 기록.
-    /// 전제: markMode == .manualPhotoTaken
-    /// Sprint 88 v8: confirmTransform == keyframe → delta=(0,0,0) 명시 저장.
-    /// Sprint 88 cycle_7+: floor projection 적용 (corridor/interfloor와 동일 패턴) — POI도 바닥에 깔림.
-    ///   `dy_local = floorY − cameraY` 로 cycle_6 server backfill 정합 향상.
-    func confirmManualPOI(label: String?) {
-        guard case .manualPhotoTaken(let photo) = markMode else { return }
-        markMode = .confirming(origin: .manual(photo: photo))
-
+        markMode = .confirming(origin: .manual(placement: placement, photo: photo))
         let id = scanId
-        let rawTransform = lastCapturedTransform
-        guard let keyframeRef = latestPersistedKeyframeForMark() else {
-            markMode = .manualPhotoTaken(photo: photo)
-            return
-        }
-        let confirmSeq = keyframeRef.seq
         let dbRef = db
-        let floorY: Float = floorTracker.floorY
-            ?? floorTracker.handleFirstCorridorMark(cameraY: rawTransform.columns.3.y)
-        let confirmTransform = FloorProjection.makeFloorProjectedTransform(
-            cameraTransform: rawTransform, floorY: floorY
-        )
-        let keyframeTransform = keyframeRef.transform
 
         storageQueue.async { [weak self] in
             guard let self else { return }
@@ -574,11 +653,13 @@ final class ScanStore {
                 guard let self else { return }
                 guard case .confirming = self.markMode else { return }
                 self.performManualPOIWrite(
-                    id: id, seq: confirmSeq,
-                    transform: confirmTransform,
-                    keyframeTransform: keyframeTransform,
+                    id: id, seq: placement.keyframeSeq,
+                    transform: placement.transform,
+                    keyframeTransform: placement.keyframeTransform,
                     label: label,
-                    photo: photo, dbRef: dbRef
+                    placement: placement,
+                    photo: photo,
+                    dbRef: dbRef
                 )
             }
         }
@@ -591,10 +672,13 @@ final class ScanStore {
         transform: simd_float4x4,
         keyframeTransform: simd_float4x4,
         label: String?,
-        photo: PendingPhoto, dbRef: ScanMetadataDatabase?
+        placement: PendingPlacement,
+        photo: PendingPhoto,
+        dbRef: ScanMetadataDatabase?
     ) {
         storageQueue.async { [weak self] in
             do {
+                var insertedPoiMarkId: Int64 = 0
                 try dbRef?.dbQueue.write { d in
                     var cols: [SIMD4<Float>] = [
                         transform.columns.0, transform.columns.1,
@@ -605,11 +689,12 @@ final class ScanStore {
                     let ty = Double(transform.columns.3.y)
                     let tz = Double(transform.columns.3.z)
                     let nowMillis = Int64(Date().timeIntervalSince1970 * 1000)
-                    // Sprint 88 cycle_7+: POI floor projection 적용 후 keyframe 대비 delta.
-                    //   dy = floorY - cameraY ≈ -1.5  (server backfill 정합)
-                    let dx = Double(transform.columns.3.x - keyframeTransform.columns.3.x)
-                    let dy = Double(transform.columns.3.y - keyframeTransform.columns.3.y)
-                    let dz = Double(transform.columns.3.z - keyframeTransform.columns.3.z)
+                    // dx/dy/dz_local: keyframe-local 3D delta (inverse(T_kf) @ p_mark).
+                    // 서버 pose_backfill 이 R_kf_optimized @ local + t_kf_optimized 로 복원.
+                    let (dx, dy, dz) = markDeltaInKeyframeLocal(
+                        markTransform: transform,
+                        keyframeTransform: keyframeTransform
+                    )
 
                     // 1. poi_mark INSERT (source='manual'). Sprint 65: track_id 컬럼 제거됨.
                     var mark = PoiMark(
@@ -629,6 +714,7 @@ final class ScanStore {
                     )
                     try mark.save(d)
                     let poiMarkId = d.lastInsertedRowID
+                    insertedPoiMarkId = poiMarkId
 
                     // 2. poi_photo INSERT 1장 (Sprint 65 v6: bbox_* 컬럼 폐기).
                     let photoArgs: StatementArguments = [
@@ -646,10 +732,18 @@ final class ScanStore {
                     )
                 }
 
+                let capturedPoiId = insertedPoiMarkId
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     guard case .confirming = self.markMode else { return }
                     self.poiMarkCount += 1
+                    // undo 추적 — poi_mark 단위 (poi_photo 는 FK CASCADE).
+                    if capturedPoiId > 0 {
+                        self.markingState.recordExternalAdd(.addPoi(id: capturedPoiId))
+                    }
+                    if let visualId = placement.temporaryVisualId {
+                        self.markARSceneOverlay.removeStandaloneMark(id: visualId)
+                    }
                     // Sprint 88 cycle_5+: POI도 SCN sphere로 visible (엣지 자동 연결 없음)
                     let poiVisualId = UUID()
                     let poiLabel = (label?.isEmpty == false ? label! : "POI \(self.poiMarkCount)")
@@ -666,46 +760,13 @@ final class ScanStore {
                     guard let self else { return }
                     guard case .confirming = self.markMode else { return }
                     self.lastError = "수동 POI 저장 실패: \(error.localizedDescription)"
-                    // 실패 시 manualPhotoTaken 상태로 복원 (재시도 가능)
-                    self.markMode = .manualPhotoTaken(photo: photo)
+                    self.markMode = .manualPositionSelected(placement: placement)
                 }
             }
         }
     }
 
     // MARK: - Legacy Mark Actions
-
-    /// - Warning: Sprint 13에서 deprecated. ADR 0002로 Track Lock 폐기 후 manual POI 흐름만 사용.
-    /// 호환을 위해 legacy entry는 유지하되 trackId 없이 단순 POI 1건 생성으로 단순화.
-    @available(*, deprecated, message: "Use startManualPOI() + confirmManualPOI(label:) instead")
-    func markPOI() {
-        guard phase == .recording else { return }
-        guard let keyframeRef = latestPersistedKeyframeForMark() else { return }
-        let seq = keyframeRef.seq
-        let transform = lastCapturedTransform
-        let id = scanId
-        let repo = markRepo
-
-        storageQueue.async { [weak self] in
-            guard let self else { return }
-            do {
-                try repo?.insertPOI(
-                    scanId: id,
-                    keyframeSeq: seq,
-                    transform: transform,
-                    keyframeTransform: keyframeRef.transform
-                )
-                Task { @MainActor in
-                    guard self.phase == .recording else { return }
-                    self.poiMarkCount += 1
-                }
-            } catch {
-                Task { @MainActor [weak self] in
-                    self?.lastError = "POI 저장 실패: \(error.localizedDescription)"
-                }
-            }
-        }
-    }
 
     func markBranch() {
         guard phase == .recording else {
@@ -754,7 +815,6 @@ final class ScanStore {
         }
         guard let keyframeRef = latestPersistedKeyframeForMark() else { return }
 
-        let seq = keyframeRef.seq
         let rawTransform = lastCapturedTransform
 
         // H5 fix: floor reference y 결정 (없으면 heuristic으로 즉시 lock)
@@ -771,6 +831,139 @@ final class ScanStore {
             "CORRIDOR_DEBUG cameraY=\(rawTransform.columns.3.y, format: .fixed(precision: 3)) projectedY=\(floorY, format: .fixed(precision: 3)) delta=\(rawTransform.columns.3.y - floorY, format: .fixed(precision: 3)) world=(\(projectedTransform.columns.3.x, format: .fixed(precision: 3)),\(floorY, format: .fixed(precision: 3)),\(projectedTransform.columns.3.z, format: .fixed(precision: 3)))"
         )
 
+        let placement = PendingPlacement(
+            transform: projectedTransform,
+            keyframeSeq: keyframeRef.seq,
+            keyframeTransform: keyframeRef.transform
+        )
+        insertCorridor(placement: placement, widthM: widthM, connectNodeId: connectNodeId)
+    }
+
+    /// corridor 노드 마킹. 화면 탭 위치를 floor raycast로 잡아 등록한다.
+    ///
+    /// 재연결 흐름 (`proximityArmed` 또는 `lastNonCornerNodeId == nil`):
+    ///   1. 탭이 기존 노드 위 → 그 노드를 sequential 시작점으로 anchor (새 노드 X)
+    ///   2. 탭이 기존 edge 위 → edge split (foot projection으로 edge 위 좌표에 새 노드 생성)
+    ///   3. 둘 다 miss → 기존 동작 (proximityArmed면 pending 대기, sequential이면 새 노드)
+    func markCorridorAtScreenPoint(_ screenPoint: CGPoint, widthM: Double? = nil) {
+        resolvePlacementAtScreenPoint(
+            screenPoint,
+            failureMessage: "노드 위치 인식 실패 — 바닥을 다시 탭하세요."
+        ) { [weak self] placement in
+            guard let self else { return }
+            let hit = SIMD3<Float>(
+                placement.transform.columns.3.x,
+                placement.transform.columns.3.y,
+                placement.transform.columns.3.z
+            )
+            let isReconnect = self.markingState.connectMode == .proximityArmed
+                || self.markingState.lastNonCornerNodeId == nil
+
+            if isReconnect {
+                // 1) 노드 hit 우선
+                if let nodeId = self.markingState.hitTestNode(at: hit, maxDistance: 0.20) {
+                    self.markingState.anchorAtNode(nodeId: nodeId)
+                    let order = self.markingState.nodes.first(where: { $0.id == nodeId })?.order ?? 0
+                    self.showMicroToast("노드 #\(order) 부터 이어서")
+                    return
+                }
+                // 2) 엣지 hit → split
+                if let edgeHit = self.markingState.hitTestEdge(at: hit, maxDistance: 0.15) {
+                    self.splitEdgeAtHit(edgeId: edgeHit.edgeId, foot: edgeHit.foot, placement: placement)
+                    return
+                }
+                // 3) miss → 기존 흐름으로 fallthrough
+            }
+
+            if self.markingState.connectMode == .proximityArmed {
+                self.pendingCorridorPlacement = placement
+                self.showMicroToast("연결할 노드 선택")
+            } else {
+                self.insertCorridor(placement: placement, widthM: widthM, connectNodeId: nil)
+            }
+        }
+    }
+
+    /// edge split — foot projection 위치에 새 corridor 노드 row를 DB에 insert하고
+    /// markingState.splitEdge 로 그래프 상태를 분할. 새 노드가 sequential 시작점이 된다.
+    /// finalize 단계에서 markingState.edges 가 통째로 INSERT되므로 edge row 자체는
+    /// DB에 별도 갱신할 필요 없음 (in-memory state만 정합 유지).
+    private func splitEdgeAtHit(edgeId: UUID, foot: SIMD3<Float>, placement: PendingPlacement) {
+        // foot 좌표로 transform 재구성 — 기존 placement.transform의 회전 보존 + translation만 foot로 교체.
+        var splitTransform = placement.transform
+        splitTransform.columns.3 = simd_float4(foot.x, foot.y, foot.z, 1.0)
+
+        // 평균 width 계산을 위해 양 끝 노드 조회.
+        guard let edge = markingState.edges.first(where: { $0.id == edgeId }),
+              let a = markingState.nodes.first(where: { $0.id == edge.from }),
+              let b = markingState.nodes.first(where: { $0.id == edge.to }) else { return }
+        let avgWidth: Double = {
+            switch (a.widthM, b.widthM) {
+            case let (wa?, wb?): return (wa + wb) / 2.0
+            case let (wa?, nil): return wa
+            case let (nil, wb?): return wb
+            default: return markingState.lastCorridorWidthM
+            }
+        }()
+
+        let seq = placement.keyframeSeq
+        let id = scanId
+        let repo = markRepo
+
+        storageQueue.async { [weak self] in
+            guard let self else { return }
+            do {
+                let rowId = try repo?.insertBranch(
+                    scanId: id,
+                    keyframeSeq: seq,
+                    transform: splitTransform,
+                    keyframeTransform: placement.keyframeTransform,
+                    nodeType: .corridor,
+                    widthM: avgWidth,
+                    connectHint: nil,
+                    connectNodeId: nil,
+                    markSessionId: nil
+                ) ?? 0
+
+                Task { @MainActor [weak self] in
+                    guard let self, self.phase == .recording else { return }
+                    if let newNode = self.markingState.splitEdge(
+                        edgeId: edgeId,
+                        newNodeId: rowId,
+                        at: foot
+                    ) {
+                        self.branchMarkCount += 1
+                        self.visibleBranchNodeIds.insert(rowId)
+                        self.showMicroToast("엣지 분할 — 노드 #\(newNode.order) 부터 이어서")
+                    } else {
+                        self.lastError = "엣지 분할 실패."
+                    }
+                }
+            } catch {
+                Task { @MainActor [weak self] in
+                    self?.lastError = "노드 저장 실패: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    func commitPendingCorridor(widthM: Double? = nil, connectNodeId: BranchMarkNodeId?) {
+        guard let placement = pendingCorridorPlacement else { return }
+        pendingCorridorPlacement = nil
+        insertCorridor(placement: placement, widthM: widthM, connectNodeId: connectNodeId)
+    }
+
+    func clearPendingCorridorPlacement() {
+        pendingCorridorPlacement = nil
+    }
+
+    private func insertCorridor(
+        placement: PendingPlacement,
+        widthM: Double?,
+        connectNodeId: BranchMarkNodeId?
+    ) {
+        let seq = placement.keyframeSeq
+        let projectedTransform = placement.transform
         let id = scanId
         let repo = markRepo
         let effectiveWidth = widthM ?? markingState.lastCorridorWidthM
@@ -786,7 +979,7 @@ final class ScanStore {
                     scanId: id,
                     keyframeSeq: seq,
                     transform: projectedTransform,      // floor-projected transform
-                    keyframeTransform: keyframeRef.transform, // v8: persisted keyframe 기준 delta 계산
+                    keyframeTransform: placement.keyframeTransform, // v8: persisted keyframe 기준 delta 계산
                     nodeType: .corridor,
                     widthM: effectiveWidth,
                     connectHint: hint,
@@ -1040,38 +1233,52 @@ final class ScanStore {
         markingState.closeCornerSession()
     }
 
-    /// 다중 undo. count개 노드 + 연결 edge cascade 제거.
+    /// 다중 undo. count개 action 을 pop. action 별 분기:
+    ///   - addNode: in-memory nodes/edges 제거 + branch_mark DB 삭제
+    ///   - addPoi: poi_mark DB 삭제 (poi_photo cascade)
+    ///   - addInterfloor: interfloor_mark DB 삭제
     func undo(count: Int = 1) {
         guard count > 0 else { return }
-        // undo할 노드 ID들 수집
-        var toDelete: [BranchMarkNodeId] = []
-        var tempStack = markingState.undoStack
-        for _ in 0..<min(count, tempStack.count) {
-            if let action = tempStack.popLast(), case .addNode(let nid) = action {
-                toDelete.append(nid)
+
+        let popped = markingState.undoLast(count: count)
+
+        var branchIds: [BranchMarkNodeId] = []
+        var poiIds: [Int64] = []
+        var interfloorIds: [Int64] = []
+        for action in popped {
+            switch action {
+            case .addNode(let nid):
+                branchIds.append(nid)
+            case .addPoi(let pid):
+                poiIds.append(pid)
+            case .addInterfloor(let iid):
+                interfloorIds.append(iid)
             }
         }
 
-        markingState.undoLast(count: count)
-        branchMarkCount = max(0, branchMarkCount - toDelete.count)
+        branchMarkCount = max(0, branchMarkCount - branchIds.count)
+        poiMarkCount = max(0, poiMarkCount - poiIds.count)
 
-        // Sprint 88 cycle_5: SCNNode anchor 제거
-        for nid in toDelete {
+        // Sprint 88 cycle_5: SCNNode anchor 제거 (branch_mark 만 — POI/interfloor 는 standalone)
+        for nid in branchIds {
             visibleBranchNodeIds.remove(nid)
             markARSceneOverlay.removeMark(nodeId: nid)
         }
         syncVisibleMarkEdges()
 
-        // DB에서도 삭제
-        let repo = markRepo
-        let ids = toDelete
+        // DB delete dispatch
+        let mRepo = markRepo
+        let iRepo = interfloorMarkRepo
+        let capturedBranch = branchIds
+        let capturedPoi = poiIds
+        let capturedInterfloor = interfloorIds
         storageQueue.async {
-            ids.forEach { nid in
-                try? repo?.deleteBranch(id: nid)
-            }
+            capturedBranch.forEach { try? mRepo?.deleteBranch(id: $0) }
+            capturedPoi.forEach     { try? mRepo?.deletePOI(id: $0) }
+            capturedInterfloor.forEach { try? iRepo?.delete(id: $0) }
         }
 
-        showMicroToast("실행 취소됨 (\(toDelete.count)개)")
+        showMicroToast("실행 취소됨 (\(popped.count)개)")
     }
 
     /// overlay tap 삭제.
@@ -1117,7 +1324,7 @@ final class ScanStore {
 
     /// proximity 후보 반환.
     func proximityCandidates(radiusM: Float = 3.0) -> [BranchMarkNode] {
-        let pos = SIMD3<Float>(
+        let pos = pendingCorridorPlacement?.position ?? SIMD3<Float>(
             lastCapturedTransform.columns.3.x,
             lastCapturedTransform.columns.3.y,
             lastCapturedTransform.columns.3.z
@@ -1139,6 +1346,13 @@ final class ScanStore {
     func setTool(_ mode: ScanToolMode) {
         if activeTool == .corner, mode != .corner {
             cornerSessionDidEnd()
+        }
+        if activeTool == .poi, mode != .poi {
+            cancelPOI()
+        }
+        if activeTool == .corridor, mode != .corridor {
+            pendingCorridorPlacement = nil
+            clearProximityMode()
         }
         if mode == .corner {
             cornerSessionDidStart()
@@ -1175,25 +1389,49 @@ final class ScanStore {
             return
         }
         guard let keyframeRef = latestPersistedKeyframeForMark() else { return }
-        let normalized = prefix.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        let connectorPrefix = normalized.isEmpty ? "\(type.prefixSeed)-A" : normalized
 
-        // Sprint 88 cycle_7: floor projection 적용 (corridor와 동일 패턴)
         let rawTransform = lastCapturedTransform
-        let capturedSeq = keyframeRef.seq
         let floorY: Float = floorTracker.floorY
             ?? floorTracker.handleFirstCorridorMark(cameraY: rawTransform.columns.3.y)
         let projectedTransform = FloorProjection.makeFloorProjectedTransform(
             cameraTransform: rawTransform, floorY: floorY
         )
+        let placement = PendingPlacement(
+            transform: projectedTransform,
+            keyframeSeq: keyframeRef.seq,
+            keyframeTransform: keyframeRef.transform
+        )
+        insertInterfloorConnector(placement: placement, type: type, prefix: prefix)
+    }
+
+    func markInterfloorConnectorAtScreenPoint(
+        _ screenPoint: CGPoint,
+        type: InterfloorConnectorType,
+        prefix: String
+    ) {
+        resolvePlacementAtScreenPoint(
+            screenPoint,
+            failureMessage: "층간 연결 위치 인식 실패 — 바닥을 다시 탭하세요."
+        ) { [weak self] placement in
+            self?.insertInterfloorConnector(placement: placement, type: type, prefix: prefix)
+        }
+    }
+
+    private func insertInterfloorConnector(
+        placement: PendingPlacement,
+        type: InterfloorConnectorType,
+        prefix: String
+    ) {
+        let normalized = prefix.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let connectorPrefix = normalized.isEmpty ? "\(type.prefixSeed)-A" : normalized
 
         let mark = InterfloorMark(
             type: type,
             prefix: connectorPrefix,
-            keyframeSeq: capturedSeq,
-            tx: Double(projectedTransform.columns.3.x),
-            ty: Double(projectedTransform.columns.3.y),
-            tz: Double(projectedTransform.columns.3.z)
+            keyframeSeq: placement.keyframeSeq,
+            tx: Double(placement.transform.columns.3.x),
+            ty: Double(placement.transform.columns.3.y),
+            tz: Double(placement.transform.columns.3.z)
         )
         // Sprint 88 v8: InterfloorMarkRepository로 dx_local/dy_local/dz_local 포함 저장.
         // cycle_7: projectedTransform(floor) + keyframeTransform=rawTransform(camera)
@@ -1201,33 +1439,38 @@ final class ScanStore {
         let id = scanId
         let iRepo = interfloorMarkRepo
         let bRepo = markRepo
-        let seq = capturedSeq
+        let seq = placement.keyframeSeq
         let connType = type.rawValue
         storageQueue.async { [weak self] in
             guard let self else { return }
             do {
-                try iRepo?.insert(
+                let interfloorRowId = try iRepo?.insert(
                     scanId: id,
                     keyframeSeq: seq,
                     connectorType: connType,
                     prefix: connectorPrefix,
-                    transform: projectedTransform,
-                    keyframeTransform: keyframeRef.transform
-                )
+                    transform: placement.transform,
+                    keyframeTransform: placement.keyframeTransform
+                ) ?? 0
                 // branch_mark에도 같은 위치로 기록 (기존 동작 유지 — markBranch() 대체)
                 try bRepo?.insertBranch(
                     scanId: id, keyframeSeq: seq,
-                    transform: projectedTransform, keyframeTransform: keyframeRef.transform
+                    transform: placement.transform, keyframeTransform: placement.keyframeTransform
                 )
+                let capturedInterfloorId = interfloorRowId
                 Task { @MainActor in
                     guard self.phase == .recording else { return }
                     self.interfloorMarks.append(mark)
+                    // undo 추적 — interfloor_mark 단위.
+                    if capturedInterfloorId > 0 {
+                        self.markingState.recordExternalAdd(.addInterfloor(id: capturedInterfloorId))
+                    }
                     // Sprint 88 cycle_7: 색 분기 — overlayMarkerKind로 4-case 전달
                     self.markARSceneOverlay.addStandaloneMark(
                         id: mark.id,
                         kind: type.overlayMarkerKind,
                         label: connectorPrefix,
-                        transform: projectedTransform
+                        transform: placement.transform
                     )
                     self.branchMarkCount += 1
                 }
@@ -1297,30 +1540,92 @@ final class ScanStore {
             )
         }
 
-        // Sprint 90: manifest mode=live_rtabmap. videoPath/posesPath null.
-        // 서버는 rtabmap.db를 입력으로 reprocess.
-        let manifest = ManifestWriter.makeLiveRtabmap(
-            scanId: scanId,
-            sidecarKeyframeMetaCount: finalCount,
-            intrinsicsFx: lastIntrinsicsFx,
-            intrinsicsFy: lastIntrinsicsFy,
-            intrinsicsCx: lastIntrinsicsCx,
-            intrinsicsCy: lastIntrinsicsCy,
-            clientAppVersion: Bundle.main.shortVersion
-        )
-        do {
-            _ = try ManifestWriter.write(scanDirectory: fileStore.scanDirectory, manifest: manifest)
-        } catch {
-            NSLog("[ScanStore] manifest.json write failed: %@", error.localizedDescription)
-        }
-
         let capturedSelf = self
         Task.detached(priority: .utility) {
             let size = capturedSelf.computeDbSize()
             await MainActor.run { capturedSelf.dbSizeBytes = size }
         }
 
+        // streaming drain + server finalize (push 서비스가 있을 때만)
+        if let service = pushService, let client = streamingClient, let serverScanId {
+            let metadataURL = fileStore.databaseURL
+            let scanDirectory = fileStore.scanDirectory
+            let fx = lastIntrinsicsFx
+            let fy = lastIntrinsicsFy
+            let cx = lastIntrinsicsCx
+            let cy = lastIntrinsicsCy
+            let appVer = Bundle.main.shortVersion
+            Task { [weak self] in
+                guard let self else { return }
+                // 남은 frame 전부 push
+                await service.drain()
+
+                // manifest.json — server scanId 기준으로 작성 (path와 일치 필수)
+                let manifest = ManifestWriter.makeLiveRtabmap(
+                    scanId: serverScanId,
+                    sidecarKeyframeMetaCount: finalCount,
+                    intrinsicsFx: fx,
+                    intrinsicsFy: fy,
+                    intrinsicsCx: cx,
+                    intrinsicsCy: cy,
+                    clientAppVersion: appVer
+                )
+                let manifestURL: URL
+                do {
+                    manifestURL = try ManifestWriter.write(scanDirectory: scanDirectory, manifest: manifest)
+                } catch {
+                    NSLog("[ScanStore] manifest.json write failed: %@", error.localizedDescription)
+                    await MainActor.run {
+                        self.pushErrorMessage = "manifest 작성 실패: \(error.localizedDescription)"
+                        self.isStreamingActive = false
+                    }
+                    return
+                }
+
+                // manifest + scan_metadata.db multipart finalize
+                do {
+                    let finalizeResponse = try await client.finalizeScan(
+                        scanId: serverScanId,
+                        manifestFileURL: manifestURL,
+                        metadataFileURL: metadataURL
+                    )
+                    await MainActor.run {
+                        self.isFinalizeComplete = finalizeResponse.state == "READY"
+                        self.pushLoopTask?.cancel()
+                        self.pushLoopTask = nil
+                        self.pushService = nil
+                        self.isStreamingActive = false
+                    }
+                    NSLog("[ScanStore] streaming finalize complete: scanId=%@ state=%@",
+                          serverScanId, finalizeResponse.state)
+                } catch {
+                    await MainActor.run {
+                        self.pushErrorMessage = "최종 업로드 실패: \(error.localizedDescription)"
+                        self.isStreamingActive = false
+                    }
+                    NSLog("[ScanStore] streaming finalize failed: %@", error.localizedDescription)
+                }
+            }
+        }
+
         phase = .saved
+    }
+
+    /// 스캔 빌드 버튼 동작. READY 상태 scan이 있을 때만 호출한다.
+    func triggerBuild() {
+        guard let client = streamingClient else { return }
+        let floorId = context.floorId
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await client.triggerBuild(floorId: floorId)
+                await MainActor.run { self.showMicroToast("빌드 시작") }
+            } catch {
+                await MainActor.run {
+                    self.lastError = "빌드 요청 실패: \(error.localizedDescription)"
+                }
+            }
+        }
     }
 
     func discard() {
@@ -1528,32 +1833,8 @@ extension ScanStore: ARSessionManagerDelegate {
     func sessionManager(_ manager: ARSessionManager, didCapture sample: KeyframeSample) {
         guard phase == .recording else { return }
 
-        // Sprint 95: angular velocity 측정 (빠른걸음 경고).
-        // 이전 transform/timestamp 가 있고 dt>0 이면 quaternion delta 로 rad/s 계산.
-        if let prev = prevTransformForVelocity {
-            let dt = sample.arFrameTimestamp - prevTimestampForVelocity
-            if dt > 0.001 {  // 너무 작은 dt 노이즈 방지
-                let q1 = simd_quatf(prev)
-                let q2 = simd_quatf(sample.transform)
-                // q2 = qDelta * q1  →  qDelta = q2 * q1.inverse
-                let qDelta = q2 * q1.inverse
-                // simd_quatf.angle 은 [0, 2π]. π 넘으면 wrap-around → min(angle, 2π-angle).
-                var angle = abs(qDelta.angle)
-                if angle > .pi { angle = 2 * .pi - angle }
-                let omega = Float(angle) / Float(dt)
-                angularVelocityWindow.append(omega)
-                if angularVelocityWindow.count > Self.angularVelocityWindowSize {
-                    angularVelocityWindow.removeFirst()
-                }
-                let smoothed = angularVelocityWindow.reduce(0, +) / Float(angularVelocityWindow.count)
-                angularVelocityRadPerSec = smoothed
-                updateFastMotionState(omega: smoothed, now: sample.arFrameTimestamp)
-            }
-        }
-        prevTransformForVelocity = sample.transform
-        prevTimestampForVelocity = sample.arFrameTimestamp
-
         lastCapturedSeq += 1
+        capturedFrameCount = lastCapturedSeq
         lastCapturedTransform = sample.transform
 
         // Sprint 88 Cycle 2: 카메라 heading 업데이트 (XZ 평면 forward vector)
@@ -1655,35 +1936,6 @@ extension ScanStore: ARSessionManagerDelegate {
 
     func sessionManager(_ manager: ARSessionManager, trackingStateDidChange label: String) {
         trackingStateLabel = label
-    }
-
-    /// Sprint 95: angular velocity sustain 으로 fastMotion enter/exit 판정.
-    private func updateFastMotionState(omega: Float, now: TimeInterval) {
-        if !fastMotion {
-            // enter 후보: threshold 이상 sustain
-            if omega >= Self.fastMotionEnterThreshold {
-                if fastMotionAboveSince == 0 {
-                    fastMotionAboveSince = now
-                } else if now - fastMotionAboveSince >= Self.fastMotionEnterSustainSec {
-                    fastMotion = true
-                    fastMotionBelowSince = 0
-                }
-            } else {
-                fastMotionAboveSince = 0
-            }
-        } else {
-            // exit 후보: threshold 미만 sustain
-            if omega < Self.fastMotionExitThreshold {
-                if fastMotionBelowSince == 0 {
-                    fastMotionBelowSince = now
-                } else if now - fastMotionBelowSince >= Self.fastMotionExitSustainSec {
-                    fastMotion = false
-                    fastMotionAboveSince = 0
-                }
-            } else {
-                fastMotionBelowSince = 0
-            }
-        }
     }
 
     func sessionManagerDidFail(_ manager: ARSessionManager, error: Error) {

@@ -31,6 +31,7 @@ struct AdminFloor: Identifiable, Hashable {
 
 struct AdminScanChunk: Identifiable, Hashable {
     enum ChunkStatus: String {
+        case ready = "READY"
         case uploaded = "UPLOADED"
         case merged = "MERGED"
         case processing = "PROCESSING"
@@ -44,6 +45,7 @@ struct AdminScanChunk: Identifiable, Hashable {
 
         var label: String {
             switch self {
+            case .ready: return "준비됨"
             case .uploaded: return "업로드 완료"
             case .merged: return "병합됨"
             case .processing: return "처리 중"
@@ -55,7 +57,7 @@ struct AdminScanChunk: Identifiable, Hashable {
 
         var isSelectable: Bool {
             switch self {
-            case .uploaded, .merged, .completed: return true
+            case .ready, .uploaded, .merged, .completed: return true
             default: return false
             }
         }
@@ -72,11 +74,15 @@ struct AdminScanChunk: Identifiable, Hashable {
 }
 
 struct AdminServerSettings: Hashable {
+    static let localDevelopmentBaseURLText =
+    "http://218.150.183.198:8000/"
+//    "http://leehyeonsuui-MacBookPro.local:8080"
+
     var baseURLText: String
     var token: String
 
     static var `default`: AdminServerSettings {
-        AdminServerSettings(baseURLText: "http://218.150.183.198:8080", token: "dev-token")
+        AdminServerSettings(baseURLText: localDevelopmentBaseURLText, token: "dev-token")
     }
 
     var baseURL: URL? {
@@ -138,6 +144,7 @@ final class AdminWorkspaceStore {
             settings.token = token
         }
         serverSettings = settings
+        NSLog("%@", "[AdminWorkspaceStore] serverBaseURL=\(settings.baseURLText)")
 
         // cache에서 buildings 로드 (cold start)
         if let cached = try? cache.fetchBuildings() {

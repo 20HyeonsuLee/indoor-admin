@@ -1,8 +1,8 @@
 import Foundation
 
 /// ARKit 프레임을 RTABMapSLAMSink에 push하는 Consumer.
-/// Sprint 92: 30fps 카메라 → SLAM에 10Hz throttle. RTAB-Map detection 1Hz보다 충분히 높고
-///   odometry 권장 10~20fps 범위. CPU/발열 절감.
+/// Sprint 92: 30fps 카메라 → SLAM throttle.
+/// Sprint 96: 발열 완화를 위해 live scan 기본 입력을 5Hz로 낮춘다.
 /// lastNodeIDForMostRecentFrame: 직전 consume 결과. KeyframeConsumer가 조회.
 /// ADR D2: rollover pause/resume 신호는 KeyframeCaptureThrottle이 제어한다.
 ///   SLAMConsumer는 자체 minInterval throttle과 별도로,
@@ -32,7 +32,7 @@ final class SLAMConsumer: FrameConsumer {
     /// Sprint 95: 블러 frame reject. nil 이면 비활성 (테스트/회귀 대비).
     private let blurDetector: BlurDetector?
 
-    init(sink: RTABMapSLAMSink, minInterval: TimeInterval = 0.1, blurDetector: BlurDetector? = BlurDetector()) {  // 0.1s = 10Hz
+    init(sink: RTABMapSLAMSink, minInterval: TimeInterval = 0.2, blurDetector: BlurDetector? = BlurDetector()) {  // 0.2s = 5Hz
         self.sink = sink
         self.minInterval = minInterval
         self.blurDetector = blurDetector

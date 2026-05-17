@@ -26,9 +26,10 @@ final class InterfloorMarkRepository: @unchecked Sendable {
         let blob = poseBlob(from: transform)
         let t = transform.columns.3
         let kf = keyframeTransform ?? transform
-        let dx = Double(t.x - kf.columns.3.x)
-        let dy = Double(t.y - kf.columns.3.y)
-        let dz = Double(t.z - kf.columns.3.z)
+        let (dx, dy, dz) = markDeltaInKeyframeLocal(
+            markTransform: transform,
+            keyframeTransform: kf
+        )
         var record = InterfloorMarkRecord(
             id: nil,
             scanId: scanId,
@@ -54,6 +55,13 @@ final class InterfloorMarkRepository: @unchecked Sendable {
                 .filter(InterfloorMarkRecord.Columns.scanId == scanId)
                 .order(InterfloorMarkRecord.Columns.id)
                 .fetchAll(d)
+        }
+    }
+
+    /// interfloor_mark 단건 삭제 (undo / overlay tap 용).
+    func delete(id: Int64) throws {
+        try db.dbQueue.write { d in
+            try d.execute(sql: "DELETE FROM interfloor_mark WHERE id = ?", arguments: [id])
         }
     }
 

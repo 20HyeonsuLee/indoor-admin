@@ -25,15 +25,12 @@ struct ScanSessionView: View {
     @State private var showFinalizeChecklist: Bool = false
     @State private var showNodeEdit: Bool = false
     @State private var showProximityCandidates: Bool = false
-    @State private var showChunkQueue: Bool = false
+    @State private var telemetryNow: Date = .now
     @Environment(\.scenePhase) private var scenePhase
 
     init(
         launchContext: ScanLaunchContext,
         serverClient: IndoorServerV1Client? = nil,
-        /// ADR D7: caller가 소유하는 observer. nil이면 ScanStore가 내부 생성.
-        chunkUploadObserver: ChunkUploadObserver? = nil,
-        chunkUploadQueue: ChunkUploadQueue? = nil,
         onFinished: @escaping (URL) async -> Void,
         onDiscarded: @escaping () -> Void
     ) {
@@ -42,9 +39,7 @@ struct ScanSessionView: View {
         self.onDiscarded = onDiscarded
         _store = State(initialValue: ScanStore(
             context: launchContext,
-            serverClient: serverClient,
-            externalChunkUploadObserver: chunkUploadObserver,
-            externalChunkUploadQueue: chunkUploadQueue
+            serverClient: serverClient
         ))
         _connectorPrefix = State(initialValue: "EV-A")
     }
@@ -63,6 +58,7 @@ struct ScanSessionView: View {
                     onCornerTap: toolMode == .corner ? { screenPoint in
                         handleCornerTap(at: screenPoint)
                     } : nil,
+                    onPlacementTap: placementTapHandler,
                     debugRawCornerTaps: store.rawCornerTapDebugMode ? store.debugRawCornerTaps : [],
                     debugRaycastWorldPoints: store.rawCornerTapDebugMode ? store.debugRaycastWorldPoints : [],
                     debugRaycastAnchorIds: store.rawCornerTapDebugMode ? store.debugRaycastAnchorIds : []
@@ -88,38 +84,11 @@ struct ScanSessionView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 14))
             }
 
-            // Sprint 95: 빠른걸음 경고 — angular velocity > 0.6 rad/s sustained.
-            // ARKit excessiveMotion 도달 *전* 미리 경고. 빨간 보더 + 상단 chip.
-            if store.fastMotion && store.phase == .recording {
-                Rectangle()
-                    .stroke(Color.red, lineWidth: 6)
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
-                VStack {
-                    HStack(spacing: 6) {
-                        Image(systemName: "speedometer")
-                            .foregroundStyle(.white)
-                        Text("천천히 — 빠른 회전 감지")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.white)
-                        Text(String(format: "%.1f rad/s", store.angularVelocityRadPerSec))
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.white.opacity(0.8))
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(.red.opacity(0.85), in: Capsule())
-                    .padding(.top, 100)
-                    Spacer()
-                }
-                .allowsHitTesting(false)
-            }
-
             if store.phase == .finalizing {
                 VStack(spacing: 8) {
                     ProgressView()
                         .tint(.white)
-                    Text("마지막 청크 저장 중")
+                    Text("스캔 저장 중")
                         .font(.headline.weight(.semibold))
                         .foregroundStyle(.white)
                 }
@@ -155,11 +124,12 @@ struct ScanSessionView: View {
         .onChange(of: store.phase) { _, newPhase in
             handlePhaseChange(newPhase)
         }
-        // Sprint 95: 빠른걸음 enter 시 haptic 1회.
-        .onChange(of: store.fastMotion) { _, isFast in
-            if isFast {
-                let generator = UIImpactFeedbackGenerator(style: .heavy)
-                generator.impactOccurred()
+        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { now in
+            telemetryNow = now
+        }
+        .onChange(of: store.pendingCorridorPlacement?.id) { _, placementId in
+            if placementId != nil {
+                showProximityCandidates = true
             }
         }
         .alert("오류", isPresented: Binding(
@@ -267,24 +237,8 @@ struct ScanSessionView: View {
                 trackingBanner
                 Spacer()
                 coverageCompactStrip
-                // ADR D7: 업로드 badge — 항상 노출 (0/0도 표시, observer wiring 검증 수단).
-                Button {
-                    showChunkQueue = true
-                } label: {
-                    Label(store.chunkUploadObserver.badgeText, systemImage: "arrow.up.circle.fill")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(.blue.opacity(0.8), in: Capsule())
-                }
-                .sheet(isPresented: $showChunkQueue) {
-                    // ADR D5: retry/delete swipe action을 위해 queue를 전달.
-                    ChunkQueueSheet(
-                        observer: store.chunkUploadObserver,
-                        queue: store.chunkUploadQueue
-                    )
-                }
+                // streaming 전송 badge — 항상 노출.
+                streamingBadge
                 stopButton
             }
             // 두 번째 줄: context ribbon slim
@@ -292,6 +246,7 @@ struct ScanSessionView: View {
             // HUD compact (toggle)
             if hudVisible {
                 hudCompactStrip
+                streamingTelemetryStrip
             }
             // hint banner (조건부)
             if let hint = store.hintBannerCase ?? store.markingState.hintBannerCase {
@@ -415,14 +370,47 @@ struct ScanSessionView: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
-    /// HUD compact 1줄: "196f · 11n · 4iv"
+    /// HUD compact 1줄: "196/210f · 11n · 4iv · 1q"
     private var hudCompactStrip: some View {
-        Text("\(store.keyframeCount)f · \(store.branchMarkCount)n · \(store.interfloorMarkCount)iv · \(store.pendingQueueCount)q")
+        Text("\(store.keyframeCount)/\(store.capturedFrameCount)f · \(store.branchMarkCount)n · \(store.interfloorMarkCount)iv · \(store.pendingQueueCount)q")
             .font(.caption2.monospacedDigit())
             .foregroundStyle(.white.opacity(0.7))
             .padding(.horizontal, 10)
             .padding(.vertical, 4)
             .background(.black.opacity(0.3))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    /// streaming 전송 badge: "전송 N/M nodes"
+    private var streamingBadge: some View {
+        let confirmed = store.streamingLastConfirmedNodeId
+        let total = store.statsModel.stats.nodeCount
+        let hasError = store.pushErrorMessage != nil
+        return Label(
+            "전송 \(confirmed)/\(total)",
+            systemImage: store.isStreamingActive ? "arrow.up.circle.fill" : "arrow.up.circle"
+        )
+        .font(.caption.monospacedDigit())
+        .foregroundStyle(.white)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            hasError ? Color.red.opacity(0.8) : Color.blue.opacity(0.8),
+            in: Capsule()
+        )
+    }
+
+    /// streaming telemetry 1줄
+    private var streamingTelemetryStrip: some View {
+        let confirmed = store.streamingLastConfirmedNodeId
+        let total = store.statsModel.stats.nodeCount
+        let stateLabel = store.isStreamingActive ? "push 중" : (store.isFinalizeComplete ? "완료" : "대기")
+        return Text("streaming \(stateLabel) · 전송 \(confirmed)/\(total) nodes")
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(store.pushErrorMessage != nil ? Color.red : Color.white.opacity(0.75))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(.black.opacity(0.35))
             .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
@@ -472,8 +460,8 @@ struct ScanSessionView: View {
         switch store.markMode {
         case .idle:
             idleActionCluster
-        case .manualPhotoTaken:
-            manualPhotoTakenButtons
+        case .manualPositionSelected:
+            poiPhotoConfirmButtons
         case .confirming:
             ProgressView().tint(.white).padding(.vertical, 12)
         }
@@ -492,20 +480,13 @@ struct ScanSessionView: View {
                 .background(.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 8))
 
         case .poi:
-            // Sprint 88 cycle_7: "객체 선택" placeholder 제거 (YOLO 폐기 cycle_65 ADR 0002).
-            // "POI 수동 등록" 단일 primary action.
-            Button {
-                store.startManualPOI()
-            } label: {
-                Label("POI 수동 등록", systemImage: "mappin.and.ellipse")
-                    .font(.subheadline.bold())
-                    .frame(maxWidth: .infinity)
-                    .frame(minHeight: 44)
-                    .padding(.vertical, 12)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.blue)
-            .disabled(store.phase != .recording)
+            Label("화면에서 POI 위치를 탭하세요", systemImage: "hand.tap")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: 44)
+                .padding(.vertical, 12)
+                .background(.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 8))
 
         case .corridor:
             corridorActionCluster
@@ -539,27 +520,17 @@ struct ScanSessionView: View {
             .tint(store.markingState.connectMode == .proximityArmed ? .yellow : .white)
             .disabled(store.phase != .recording)
 
-            // 마크 버튼 (F3: plus.circle.fill)
-            Button {
-                if store.markingState.connectMode == .proximityArmed {
-                    showProximityCandidates = true
-                } else {
-                    store.markCorridor(widthM: selectedWidthM)
-                }
-            } label: {
-                VStack(spacing: 4) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.title3)
-                    Text("마크")
-                        .font(.caption2.bold())
-                }
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: 44)
-                .padding(.vertical, 10)
+            VStack(spacing: 4) {
+                Image(systemName: "hand.tap.fill")
+                    .font(.title3)
+                Text(store.markingState.connectMode == .proximityArmed ? "위치 탭 후 연결" : "화면 탭")
+                    .font(.caption2.bold())
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.orange)
-            .disabled(store.phase != .recording || store.trackingStateLabel != "normal")
+            .foregroundStyle(.black)
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 44)
+            .padding(.vertical, 10)
+            .background(.orange, in: RoundedRectangle(cornerRadius: 8))
 
             // 취소(undo)
             Button {
@@ -612,8 +583,8 @@ struct ScanSessionView: View {
         switch store.markMode {
         case .idle:
             EmptyView()
-        case .manualPhotoTaken:
-            bannerText("사진을 찍었습니다. 목적지로 이동 후 포지션 지정.", color: .teal)
+        case .manualPositionSelected:
+            bannerText("POI 위치 선택됨. 사진 찍기 버튼으로 등록.", color: .teal)
         case .confirming:
             bannerText("마킹 저장 중...", color: .gray)
         }
@@ -650,28 +621,23 @@ struct ScanSessionView: View {
                     .textFieldStyle(.roundedBorder)
             }
 
-            Button {
-                store.markInterfloorConnector(type: connectorType, prefix: connectorPrefix)
-            } label: {
-                Label("층간 연결 노드 등록", systemImage: connectorType.icon)
-                    .font(.subheadline.bold())
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(.purple)
-            .disabled(store.phase != .recording)
+            Label("연결 위치를 화면에서 탭하세요", systemImage: "hand.tap")
+                .font(.subheadline.bold())
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(.purple.opacity(0.8), in: RoundedRectangle(cornerRadius: 8))
         }
         .padding(.bottom, 12)
     }
 
-    /// Sprint 14: 수동 모드 — 사진 찍은 후 이동 중. "포지션 지정 | 취소" 2열.
-    private var manualPhotoTakenButtons: some View {
+    /// POI 위치 선택 후 "사진 찍고 등록 | 취소" 2열.
+    private var poiPhotoConfirmButtons: some View {
         HStack(spacing: 16) {
             Button {
                 store.confirmManualPOI(label: nil)
             } label: {
-                Label("포지션 지정", systemImage: "location.fill")
+                Label("사진 찍고 등록", systemImage: "camera.fill")
                     .font(.subheadline.bold())
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
@@ -706,10 +672,11 @@ struct ScanSessionView: View {
                         Text("근처 visible 노드 없음")
                             .foregroundStyle(.red)
                         Button("고립 등록 (연결 없이)") {
-                            store.markCorridor(widthM: selectedWidthM, connectNodeId: nil)
+                            store.commitPendingCorridor(widthM: selectedWidthM, connectNodeId: nil)
                             showProximityCandidates = false
                         }
                         Button("취소") {
+                            store.clearPendingCorridorPlacement()
                             store.clearProximityMode()
                             showProximityCandidates = false
                         }
@@ -718,7 +685,7 @@ struct ScanSessionView: View {
                     Section("근처 노드 선택 (3m 이내)") {
                         ForEach(candidates) { node in
                             Button {
-                                store.markCorridor(widthM: selectedWidthM, connectNodeId: node.id)
+                                store.commitPendingCorridor(widthM: selectedWidthM, connectNodeId: node.id)
                                 showProximityCandidates = false
                             } label: {
                                 HStack {
@@ -745,6 +712,7 @@ struct ScanSessionView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("취소") {
+                        store.clearPendingCorridorPlacement()
                         store.clearProximityMode()
                         showProximityCandidates = false
                     }
@@ -754,6 +722,29 @@ struct ScanSessionView: View {
     }
 
     // MARK: - Helpers
+
+    private var placementTapHandler: ((CGPoint) -> Void)? {
+        switch toolMode {
+        case .corridor:
+            return { point in
+                store.markCorridorAtScreenPoint(point, widthM: selectedWidthM)
+            }
+        case .poi:
+            return { point in
+                store.selectPOIPlacementAtScreenPoint(point)
+            }
+        case .connector:
+            return { point in
+                store.markInterfloorConnectorAtScreenPoint(
+                    point,
+                    type: connectorType,
+                    prefix: connectorPrefix
+                )
+            }
+        case .scan, .corner:
+            return nil
+        }
+    }
 
     private var trackingColor: Color {
         switch store.trackingStateLabel {
@@ -836,48 +827,11 @@ struct ScanSessionView: View {
     }
 
     private func handlePausedPhase() {
-        // ADR D4: chunked path와 legacy path 이중 실행 방지.
-        // ChunkUploadQueue가 active이면 ChunkRolloverScheduler.stop()이 이미
-        // ScanStore.stop()에서 마지막 chunk를 flush했으므로 legacy zip 경로를 skip한다.
-        if store.chunkUploadQueue != nil {
-            handleChunkedScanStop()
-        } else {
-            handleLegacyScanStop()
-        }
-    }
-
-    /// chunked scan 종료: scheduler가 마지막 chunk를 flush했으므로 dismiss만 수행.
-    private func handleChunkedScanStop() {
-        Task {
-            await MainActor.run { dismiss() }
-        }
-    }
-
-    /// legacy (non-chunked) scan 종료: finalize → zip → onFinished → dismiss.
-    private func handleLegacyScanStop() {
-        let scanDir = store.fileStore.scanDirectory
-        let scanId = store.scanId
+        // streaming 모델: finalize → streaming drain은 ScanStore.finalize() 내에서 비동기 처리.
+        // paused 전환 후 즉시 finalize + dismiss.
         Task {
             do {
                 try store.finalize()
-                // Sprint 88 cycle_7: tmp → Documents/exports/ 로 저장 위치 변경.
-                // Files 앱(On My iPhone → IndoorPathfinding → exports)에서 사용자가 직접 접근 가능.
-                let exportsDir = ScanFileStore.exportsDirectory
-                try FileManager.default.createDirectory(
-                    at: exportsDir, withIntermediateDirectories: true
-                )
-                let zipURL = exportsDir.appendingPathComponent("\(scanId).zip")
-                let archiver = ZipScanArchiver()
-                try await archiver.archive(
-                    scanDirectory: scanDir,
-                    destination: zipURL,
-                    scanId: scanId,
-                    progress: { _ in }
-                )
-                await MainActor.run {
-                    store.showZipExportToast(path: zipURL.lastPathComponent)
-                }
-                await onFinished(zipURL)
                 await MainActor.run { dismiss() }
             } catch {
                 await MainActor.run {
@@ -935,6 +889,6 @@ enum ScanToolMode: String, CaseIterable, Identifiable {
             floorLevel: 1
         ),
         onFinished: { _ in },
-        onDiscarded: { }
+        onDiscarded: {}
     )
 }

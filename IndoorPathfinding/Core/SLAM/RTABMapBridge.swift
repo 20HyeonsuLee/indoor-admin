@@ -4,6 +4,17 @@ import Darwin
 import GLKit
 import OSLog
 
+private struct RTABMapNativeHandle: @unchecked Sendable {
+    let pointer: UnsafeMutableRawPointer
+}
+
+private struct RTABMapLifecycleResult: @unchecked Sendable {
+    let dbURL: URL
+    let nodeStamps: [(nodeId: Int, stamp: Double)]
+    let newNative: RTABMapNativeHandle?
+    let callbackOpaque: RTABMapNativeHandle?
+}
+
 /// RTAB-Map native 백엔드 Swift 래퍼.
 /// RTABMapApp의 RTABMap.swift에서 odometry/save/stats 경로만 발췌.
 ///
@@ -58,6 +69,7 @@ final class RTABMapBridge: RTABMapSLAMSink, RTABMapBridgeEnqueueProtocol {
 
     // M-7: 구조화 로깅 — subsystem/category 지정으로 Console.app/log stream 필터링 가능
     private static let logger = Logger(subsystem: "ac.koreatech.indoorpathfinding", category: "rtabmap")
+    nonisolated private static let lifecycleQueue = DispatchQueue(label: "ac.koreatech.indoorpathfinding.rtabmap.lifecycle", qos: .userInitiated)
 
     /// M-6: 콜백에 전달한 opaque 포인터의 retain을 보관.
     /// deinit 전까지 self가 살아있도록 강한 참조를 직접 유지한다.
@@ -515,7 +527,78 @@ final class RTABMapBridge: RTABMapSLAMSink, RTABMapBridgeEnqueueProtocol {
         return (dbURL: dbURL, nodeStamps: nodeStamps)
     }
 
+    func closeCurrentChunkAsync(
+        currentScanURL: URL
+    ) async throws -> (closedDBURL: URL, nodeStamps: [(nodeId: Int, stamp: Double)]) {
+        guard let native else { throw RTABMapBridgeError.notStarted }
+
+        let nativeHandle = RTABMapNativeHandle(pointer: native)
+        let nodeCount = lastKnownNodeCount
+        let pushCount = pushFrameCallCount
+
+        NSLog("[RTABMap-DIAG] closeCurrentChunkAsync scheduled. totalPushFrameCalls=%d lastKnownNodeCount=%d", pushCount, nodeCount)
+
+        callbackRetain?.release()
+        callbackRetain = nil
+        self.native = nil
+        pendingKeyframes = []
+        lastKnownNodeCount = 0
+        pushFrameCallCount = 0
+        stats = RTABMapStats()
+
+        let result = try await Self.performCloseCurrentChunk(
+            native: nativeHandle,
+            currentScanURL: currentScanURL,
+            lastKnownNodeCount: nodeCount,
+            pushFrameCallCount: pushCount
+        )
+        return (closedDBURL: result.dbURL, nodeStamps: result.nodeStamps)
+    }
+
     // MARK: - Chunked rollover (ADR D2)
+
+    func rolloverChunkAsync(
+        currentScanURL: URL,
+        nextScanURL: URL
+    ) async throws -> (closedDBURL: URL, nodeStamps: [(nodeId: Int, stamp: Double)]) {
+        guard let native else { throw RTABMapBridgeError.notStarted }
+
+        let nativeHandle = RTABMapNativeHandle(pointer: native)
+        let nodeCount = lastKnownNodeCount
+        let newCallbackRetain = Unmanaged.passRetained(self)
+        let newCallbackOpaque = RTABMapNativeHandle(pointer: newCallbackRetain.toOpaque())
+
+        NSLog("[RTABMap-DIAG] rolloverChunkAsync scheduled. lastKnownNodeCount=%d", nodeCount)
+
+        callbackRetain?.release()
+        callbackRetain = nil
+        self.native = nil
+        pendingKeyframes = []
+        lastKnownNodeCount = 0
+        pushFrameCallCount = 0
+        stats = RTABMapStats()
+
+        do {
+            let result = try await Self.performRolloverChunk(
+                native: nativeHandle,
+                currentScanURL: currentScanURL,
+                nextScanURL: nextScanURL,
+                lastKnownNodeCount: nodeCount,
+                callbackOpaque: newCallbackOpaque
+            )
+            guard let newNative = result.newNative,
+                  let callbackOpaque = result.callbackOpaque else {
+                Unmanaged<RTABMapBridge>.fromOpaque(newCallbackOpaque.pointer).release()
+                throw RTABMapBridgeError.notStarted
+            }
+            self.native = newNative.pointer
+            self.callbackRetain = Unmanaged<RTABMapBridge>.fromOpaque(callbackOpaque.pointer)
+            return (closedDBURL: result.dbURL, nodeStamps: result.nodeStamps)
+        } catch {
+            Unmanaged<RTABMapBridge>.fromOpaque(newCallbackOpaque.pointer).release()
+            throw error
+        }
+    }
 
     /// 현재 chunk DB를 저장·종료하고 새 chunk DB를 즉시 초기화한다.
     /// ARKit world tracking은 끊지 않는다 — ARSession은 계속 유지.
@@ -578,17 +661,19 @@ final class RTABMapBridge: RTABMapSLAMSink, RTABMapBridgeEnqueueProtocol {
                 guard let opaque else { return }
                 let me = Unmanaged<RTABMapBridge>.fromOpaque(opaque).takeUnretainedValue()
                 let nodeCount = Int(nodes)
-                let newLoopCount = Int(loopClosureId) > 0
-                    ? me.stats.loopClosureCount + 1
-                    : me.stats.loopClosureCount
-                let snapshot = RTABMapStats(
-                    nodeCount: nodeCount,
-                    loopClosureCount: newLoopCount,
-                    dbBytes: Int64(databaseMemoryUsed)
-                )
-                let loopDetected = newLoopCount > me.stats.loopClosureCount
-                let prevNodeCount = me.stats.nodeCount
+                let hasLoopClosure = Int(loopClosureId) > 0
+                let dbBytes = Int64(databaseMemoryUsed)
                 Task { @MainActor in
+                    let newLoopCount = hasLoopClosure
+                        ? me.stats.loopClosureCount + 1
+                        : me.stats.loopClosureCount
+                    let snapshot = RTABMapStats(
+                        nodeCount: nodeCount,
+                        loopClosureCount: newLoopCount,
+                        dbBytes: dbBytes
+                    )
+                    let loopDetected = newLoopCount > me.stats.loopClosureCount
+                    let prevNodeCount = me.stats.nodeCount
                     me.stats = snapshot
                     me.lastKnownNodeCount = snapshot.nodeCount
                     me.statsListener?.update(snapshot)
@@ -630,6 +715,13 @@ final class RTABMapBridge: RTABMapSLAMSink, RTABMapBridgeEnqueueProtocol {
     /// getAllNodeIdsAndStampsNative를 호출해 (nodeId, stamp) 배열을 반환한다.
     /// native가 유효한 상태(destroyNativeApplication 전)에서만 호출해야 한다.
     private func extractAllNodeStamps(native: UnsafeMutableRawPointer) -> [(nodeId: Int, stamp: Double)] {
+        Self.extractAllNodeStamps(native: native, lastKnownNodeCount: lastKnownNodeCount)
+    }
+
+    nonisolated private static func extractAllNodeStamps(
+        native: UnsafeMutableRawPointer,
+        lastKnownNodeCount: Int
+    ) -> [(nodeId: Int, stamp: Double)] {
         // 버퍼 크기: lastKnownNodeCount + 여유 10. 최소 128.
         let bufferSize = max(128, lastKnownNodeCount + 10)
         var ids = [Int32](repeating: 0, count: bufferSize)
@@ -646,6 +738,140 @@ final class RTABMapBridge: RTABMapSLAMSink, RTABMapBridgeEnqueueProtocol {
             guard nodeId > 0, stamp > 0.0 else { return nil }
             return (nodeId: nodeId, stamp: stamp)
         }
+    }
+
+    nonisolated private static func performCloseCurrentChunk(
+        native: RTABMapNativeHandle,
+        currentScanURL: URL,
+        lastKnownNodeCount: Int,
+        pushFrameCallCount: Int
+    ) async throws -> RTABMapLifecycleResult {
+        try await withCheckedThrowingContinuation { continuation in
+            lifecycleQueue.async {
+                let raw = native.pointer
+                let dbURL = currentScanURL.appendingPathComponent("rtabmap.db")
+                NSLog("[RTABMap-DIAG] closeCurrentChunk background begin. totalPushFrameCalls=%d lastKnownNodeCount=%d savePath=%@",
+                      pushFrameCallCount, lastKnownNodeCount, dbURL.path)
+                let nodeStamps = extractAllNodeStamps(native: raw, lastKnownNodeCount: lastKnownNodeCount)
+                NSLog("[NodeIDBackfill] closeCurrentChunk extracted nodeStamps count=%d", nodeStamps.count)
+                dbURL.path.withCString { cStr in
+                    saveNative(raw, cStr)
+                }
+                let savedSize = (try? FileManager.default.attributesOfItem(atPath: dbURL.path)[.size] as? Int64) ?? -1
+                NSLog("[RTABMap-DIAG] closeCurrentChunk saveNative completed. rtabmap.db size=%lld bytes", savedSize)
+                destroyNativeApplication(raw)
+                continuation.resume(returning: RTABMapLifecycleResult(
+                    dbURL: dbURL,
+                    nodeStamps: nodeStamps,
+                    newNative: nil,
+                    callbackOpaque: nil
+                ))
+            }
+        }
+    }
+
+    nonisolated private static func performRolloverChunk(
+        native: RTABMapNativeHandle,
+        currentScanURL: URL,
+        nextScanURL: URL,
+        lastKnownNodeCount: Int,
+        callbackOpaque: RTABMapNativeHandle
+    ) async throws -> RTABMapLifecycleResult {
+        try await withCheckedThrowingContinuation { continuation in
+            lifecycleQueue.async {
+                let oldNative = native.pointer
+                NSLog("[RTABMap-DIAG] rolloverChunk background begin. lastKnownNodeCount=%d", lastKnownNodeCount)
+
+                let stamps = extractAllNodeStamps(native: oldNative, lastKnownNodeCount: lastKnownNodeCount)
+                NSLog("[RTABMap-DIAG] rolloverChunk nodeStamps count=%d", stamps.count)
+
+                let closedDBURL = currentScanURL.appendingPathComponent("rtabmap.db")
+                NSLog("[RTABMap-DIAG] rolloverChunk saveNative path=%@", closedDBURL.path)
+                closedDBURL.path.withCString { cStr in
+                    saveNative(oldNative, cStr)
+                }
+                let savedSize = (try? FileManager.default.attributesOfItem(atPath: closedDBURL.path)[.size] as? Int64) ?? -1
+                NSLog("[RTABMap-DIAG] rolloverChunk saveNative done. rtabmap.db size=%lld", savedSize)
+
+                destroyNativeApplication(oldNative)
+
+                NSLog("[RTABMap-DIAG] rolloverChunk: old session destroyed. Initializing new session...")
+                let rawPtr = createNativeApplication()
+                guard let newNative = UnsafeMutableRawPointer(mutating: rawPtr) else {
+                    continuation.resume(throwing: RTABMapBridgeError.notStarted)
+                    return
+                }
+                setupLifecycleCallbacks(native: newNative, opaqueSelf: callbackOpaque.pointer)
+
+                setPausedMappingNative(newNative, true)
+                setDataRecorderModeNative(newNative, true)
+                setLocalizationModeNative(newNative, false)
+                setFullResolutionNative(newNative, true)
+
+                let newWorkingPath = nextScanURL.appendingPathComponent("rtabmap_working.db").path
+                var openResult: Int32 = 0
+                newWorkingPath.withCString { cStr in
+                    openResult = openDatabaseNative(newNative, cStr, false, true, true)
+                }
+                NSLog("[RTABMap-DIAG] rolloverChunk openDatabaseNative result=%d path=%@", openResult, newWorkingPath)
+
+                setPausedMappingNative(newNative, false)
+                setMaxCloudDepthNative(newNative, 5.0)
+                setCloudDensityLevelNative(newNative, 1)
+                let started = startCameraNative(newNative)
+                NSLog("[RTABMap-DIAG] rolloverChunk startCameraNative=%d", started ? 1 : 0)
+                NSLog("[RTABMap-DIAG] rolloverChunk background complete. new session ready.")
+
+                continuation.resume(returning: RTABMapLifecycleResult(
+                    dbURL: closedDBURL,
+                    nodeStamps: stamps,
+                    newNative: RTABMapNativeHandle(pointer: newNative),
+                    callbackOpaque: callbackOpaque
+                ))
+            }
+        }
+    }
+
+    nonisolated private static func setupLifecycleCallbacks(
+        native: UnsafeMutableRawPointer,
+        opaqueSelf: UnsafeMutableRawPointer
+    ) {
+        setupCallbacksNative(
+            native,
+            opaqueSelf,
+            { _, _, _ in },
+            { _, _, _ in },
+            { opaque, nodes, _, _, _, _, loopClosureId, _, databaseMemoryUsed, _, _, _, _, nodesDrawn, _, _, _, _, _, _, _, _, _, _, _, _, _, _ in
+                guard let opaque else { return }
+                let me = Unmanaged<RTABMapBridge>.fromOpaque(opaque).takeUnretainedValue()
+                let nodeCount = Int(nodes)
+                let hasLoopClosure = Int(loopClosureId) > 0
+                let dbBytes = Int64(databaseMemoryUsed)
+                Task { @MainActor in
+                    let newLoopCount = hasLoopClosure
+                        ? me.stats.loopClosureCount + 1
+                        : me.stats.loopClosureCount
+                    let snapshot = RTABMapStats(
+                        nodeCount: nodeCount,
+                        loopClosureCount: newLoopCount,
+                        dbBytes: dbBytes
+                    )
+                    let loopDetected = newLoopCount > me.stats.loopClosureCount
+                    let prevNodeCount = me.stats.nodeCount
+                    me.stats = snapshot
+                    me.lastKnownNodeCount = snapshot.nodeCount
+                    me.statsListener?.update(snapshot)
+                    if loopDetected {
+                        me.pendingPosePull = true
+                        me.schedulePosePullIfNeeded()
+                    }
+                    if nodeCount > prevNodeCount {
+                        me.matchPendingKeyframeForNewNode()
+                    }
+                }
+            },
+            { _, _, _, _ in }
+        )
     }
 
     // MARK: - RTABMapPoseProvider

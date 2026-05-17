@@ -42,6 +42,7 @@ struct ZipScanArchiverTests {
         let entryPaths = archive.map { $0.path }
         #expect(entryPaths.contains("\(fake.scanId)/rtabmap.db"))
         #expect(entryPaths.contains("\(fake.scanId)/scan_metadata.db"))
+        #expect(entryPaths.filter { $0 == "\(fake.scanId)/rtabmap.db" }.count == 1)
         // Sprint 49 (Codex BLOCKER 5): keyframes/ 폴더는 zip 에 포함되지 않는다.
         // RTABMap.db Data 테이블이 keyframe image source-of-truth.
         #expect(!entryPaths.contains("\(fake.scanId)/keyframes/000001.jpg"))

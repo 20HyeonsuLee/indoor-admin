@@ -62,6 +62,12 @@ final class ARKitSessionManager: NSObject, ARSessionManager {
     let session = ARSession()
     var arSession: ARSession? { session }
 
+    /// ARSession delegate에서 pixelBuffer/depthMap deep copy를 만들기 전 적용하는 coarse gate.
+    /// Sprint 96: 발열 완화를 위해 live RTAB-Map 입력을 5Hz 기준으로 낮춘다.
+    private static let minDeliveredFrameInterval: TimeInterval = 0.2
+    private static let maxPendingBeforeFrameCopy: Int = 10
+    private var lastDeliveredFrameTimestamp: TimeInterval?
+
     /// Sprint 95: 빠른걸음 스캔용 셔터 pin. iOS 16 미만에서는 nil.
     private var exposureController: Any?
 
@@ -85,6 +91,7 @@ final class ARKitSessionManager: NSObject, ARSessionManager {
 
     func start() {
         #if !targetEnvironment(simulator)
+        lastDeliveredFrameTimestamp = nil
         let config = ARWorldTrackingConfiguration()
         config.planeDetection = [.horizontal, .vertical]
         // Sprint 90 live_rtabmap: LiDAR sceneDepth 활성 (지원 기기 한정).
@@ -93,8 +100,7 @@ final class ARKitSessionManager: NSObject, ARSessionManager {
             config.frameSemantics.insert(.sceneDepth)
         }
         // Sprint 95: ARKit videoFormat 을 4:3 (depth aspect 일치) 우선으로 선택.
-        // depth 256×192(4:3) 와 RGB aspect 가 같아야 RTAB-Map 의 DepthAsMask interpolate 가
-        // 추가 crop 없이 동작. 1280×720(16:9) 는 4:3 미지원 기기에서만 fallback.
+        // Sprint 96: 발열 완화를 위해 30fps/lower 4:3 포맷을 우선한다.
         config.videoFormat = Self.preferredVideoFormat()
         session.run(config, options: [.resetTracking, .removeExistingAnchors])
 
@@ -111,15 +117,9 @@ final class ARKitSessionManager: NSObject, ARSessionManager {
         #endif
     }
 
-    /// 4:3 1920×1440 우선 supportedVideoFormat 선택.
-    /// Sprint 95: 16:9 HD(1280×720) → 4:3 1920×1440으로 변경.
-    ///   ARKit LiDAR sceneDepth는 항상 256×192 (4:3) 고정. 16:9 RGB와 aspect mismatch가
-    ///   있으면 RTAB-Map이 depth를 RGB 영역에 맞추기 위해 crop/interpolate 비용을 추가로
-    ///   치른다. 4:3 RGB로 통일하면 aspect 일치 → Mem/DepthAsMask=true에서 depth가
-    ///   바로 RGB 해상도로 interpolate된다.
-    ///   1920/256 = 7.5, 1440/192 = 7.5 — 정수배는 아니지만 introlab 공식 iOS 앱과 동일.
-    ///   `Mem/ImagePreDecimation=2`(setFullResolutionNative=true)와 함께 쓰면 db에는
-    ///   960×720으로 저장되고 SIFT는 그 위에서 추출.
+    /// 발열 완화용 supportedVideoFormat 선택.
+    /// 4:3 aspect는 유지하되 1280×960/30fps를 우선하고, 미지원 기기만 상위 해상도로 fallback.
+    /// ARKit LiDAR sceneDepth는 256×192(4:3)라서 16:9보다 4:3 RGB가 crop/interpolate 부담이 작다.
     private static func preferredVideoFormat() -> ARConfiguration.VideoFormat {
         let supported = ARWorldTrackingConfiguration.supportedVideoFormats
 
@@ -132,11 +132,11 @@ final class ARKitSessionManager: NSObject, ARSessionManager {
         func pick(_ candidates: [(Int, Int)]) -> ARConfiguration.VideoFormat? {
             for (w, h) in candidates {
                 let formats = supported.filter { matches($0, w, h) }
-                if let f60 = formats.first(where: { $0.framesPerSecond == 60 }) {
-                    return f60
-                }
                 if let f30 = formats.first(where: { $0.framesPerSecond == 30 }) {
                     return f30
+                }
+                if let f60 = formats.first(where: { $0.framesPerSecond == 60 }) {
+                    return f60
                 }
                 if let any = formats.first {
                     return any
@@ -145,13 +145,13 @@ final class ARKitSessionManager: NSObject, ARSessionManager {
             return nil
         }
 
-        // 1차: 4:3 (depth 256×192와 aspect 일치, introlab 공식 iOS 앱 default)
-        if let f = pick([(1920, 1440), (1440, 1080), (1280, 960)]) {
+        // 1차: 4:3 lower resolution 우선.
+        if let f = pick([(1280, 960), (1440, 1080), (1920, 1440)]) {
             return f
         }
 
         // 2차: 16:9 fallback (4:3 미지원 기기) — depth와 aspect mismatch는 RTAB-Map이 처리
-        if let f = pick([(1920, 1080), (1280, 720)]) {
+        if let f = pick([(1280, 720), (1920, 1080)]) {
             return f
         }
 
@@ -171,12 +171,18 @@ extension ARKitSessionManager: ARSessionDelegate {
         // ARKit은 Main thread에서 이 메서드를 호출한다(공식 문서 보장).
         // assume(on:) 없이 MainActor.assumeIsolated로 컴파일러에 알림.
         MainActor.assumeIsolated {
-            // pixelBuffer를 즉시 복사 — ARKit이 pool을 재활용하기 전에.
-            guard let copied = frame.capturedImage.deepCopy() else { return }
-
             let label = trackingLabel(for: frame.camera.trackingState)
             guard label == "normal" else {
                 delegate?.sessionManager(self, trackingStateDidChange: label)
+                return
+            }
+
+            guard let delegate else { return }
+            if let lastDeliveredFrameTimestamp,
+               frame.timestamp - lastDeliveredFrameTimestamp < Self.minDeliveredFrameInterval {
+                return
+            }
+            guard delegate.pendingQueueCount < Self.maxPendingBeforeFrameCopy else {
                 return
             }
 
@@ -185,6 +191,10 @@ extension ARKitSessionManager: ARSessionDelegate {
                let controller = exposureController as? ExposureController {
                 controller.update(ambientIntensity: Double(ambient), now: frame.timestamp)
             }
+
+            // pixelBuffer를 즉시 복사 — ARKit이 pool을 재활용하기 전에.
+            guard let copied = frame.capturedImage.deepCopy() else { return }
+            lastDeliveredFrameTimestamp = frame.timestamp
 
             // Sprint 3.5: RTAB-Map에 필요한 추가 필드 추출.
             let intrinsics = frame.camera.intrinsics
@@ -222,7 +232,7 @@ extension ARKitSessionManager: ARSessionDelegate {
                 confidenceMap: confidenceMap,
                 featurePoints: featurePoints
             )
-            delegate?.sessionManager(self, didCapture: sample)
+            delegate.sessionManager(self, didCapture: sample)
         }
     }
 

@@ -99,7 +99,15 @@ struct IndoorServerClient {
     }
 
     private func data(for request: URLRequest) async throws -> Data {
-        let (data, response) = try await session.data(for: request)
+        logRequest(request, bodyBytes: request.httpBody?.count)
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            logTransportError(request: request, error: error)
+            throw error
+        }
+        logResponse(request: request, response: response, dataBytes: data.count)
         guard let http = response as? HTTPURLResponse else { return data }
         guard (200..<300).contains(http.statusCode) else {
             throw makeHTTPError(status: http.statusCode, data: data)
@@ -108,12 +116,53 @@ struct IndoorServerClient {
     }
 
     private func upload(for request: URLRequest, fromFile fileURL: URL) async throws -> Data {
-        let (data, response) = try await session.upload(for: request, fromFile: fileURL)
+        let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
+        let fileBytes = (attributes?[.size] as? NSNumber)?.intValue ?? 0
+        logRequest(request, bodyBytes: fileBytes)
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.upload(for: request, fromFile: fileURL)
+        } catch {
+            logTransportError(request: request, error: error)
+            throw error
+        }
+        logResponse(request: request, response: response, dataBytes: data.count)
         guard let http = response as? HTTPURLResponse else { return data }
         guard (200..<300).contains(http.statusCode) else {
             throw makeHTTPError(status: http.statusCode, data: data)
         }
         return data
+    }
+
+    private func logRequest(_ request: URLRequest, bodyBytes: Int?) {
+        let method = request.httpMethod ?? "GET"
+        let urlText = request.url?.absoluteString ?? "<nil>"
+        let bodyText = bodyBytes.map { " bodyBytes=\($0)" } ?? ""
+        log("[IndoorServerClient] request method=\(method) url=\(urlText)\(bodyText)")
+    }
+
+    private func logResponse(request: URLRequest, response: URLResponse, dataBytes: Int) {
+        let method = request.httpMethod ?? "GET"
+        let urlText = request.url?.absoluteString ?? "<nil>"
+        guard let http = response as? HTTPURLResponse else {
+            log("[IndoorServerClient] response method=\(method) nonHTTP url=\(urlText) bytes=\(dataBytes)")
+            return
+        }
+        log("[IndoorServerClient] response method=\(method) status=\(http.statusCode) url=\(urlText) bytes=\(dataBytes)")
+    }
+
+    private func logTransportError(request: URLRequest, error: Error) {
+        let method = request.httpMethod ?? "GET"
+        let urlText = request.url?.absoluteString ?? "<nil>"
+        if let urlError = error as? URLError {
+            log("[IndoorServerClient] transportError method=\(method) url=\(urlText) code=\(urlError.code.rawValue) description=\(urlError.localizedDescription)")
+            return
+        }
+        log("[IndoorServerClient] transportError method=\(method) url=\(urlText) error=\(error.localizedDescription)")
+    }
+
+    private func log(_ message: String) {
+        NSLog("%@", message)
     }
 
     // F3: legacy /route 에러 envelope 파싱

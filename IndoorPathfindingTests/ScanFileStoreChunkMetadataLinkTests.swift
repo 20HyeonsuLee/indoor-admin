@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import GRDB
 @testable import IndoorPathfinding
 
 /// ADR 0002 D1 — scan_metadata.db chunk snapshot 검증.
@@ -93,5 +94,80 @@ struct ScanFileStoreChunkMetadataLinkTests {
         try store.refreshChunkScanMetadataSnapshot(chunkIndex: 0)
         let readBack = try Data(contentsOf: snapshotURL)
         #expect(readBack == updated)
+    }
+
+    @Test("chunk snapshot 정규화 시 scan_id와 시간창 row만 남긴다")
+    func prepareChunkSnapshotRewritesScanIdAndFiltersRows() throws {
+        let (store, tempRoot) = try makeTempFileStore()
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        try FileManager.default.createDirectory(at: store.scanDirectory, withIntermediateDirectories: true)
+        let metadata = try ScanMetadataDatabase(dbURL: store.databaseURL)
+        let originalScanId = store.scanId
+        let chunkScanId = UUID().uuidString
+        let blob = Data(repeating: 0x01, count: 64)
+
+        try metadata.dbQueue.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO scan_session
+                    (id, started_at, ended_at, device_model, app_version, state, keyframe_count, notes)
+                VALUES (?, ?, NULL, 'iPhone', '1.0', 'recording', 2, NULL)
+                """,
+                arguments: [originalScanId, 1_000]
+            )
+            try db.execute(
+                sql: """
+                INSERT INTO keyframe_meta
+                    (scan_id, seq, captured_at, image_path, pose_matrix, tx, ty, tz, tracking_state, rtabmap_node_id)
+                VALUES
+                    (?, 1, 1000, '', ?, 0, 0, 0, 'normal', 1),
+                    (?, 2, 2000, '', ?, 1, 0, 0, 'normal', 2)
+                """,
+                arguments: [originalScanId, blob, originalScanId, blob]
+            )
+            try db.execute(
+                sql: """
+                INSERT INTO branch_mark
+                    (scan_id, keyframe_seq, created_at, pose_matrix, tx, ty, tz, node_type)
+                VALUES (?, 2, 2000, ?, 1, 0, 0, 'corridor')
+                """,
+                arguments: [originalScanId, blob]
+            )
+            try db.execute(
+                sql: """
+                INSERT INTO branch_edge
+                    (scan_id, from_node_id, to_node_id, kind, length_m, mark_session_id, polygon_closed, created_at)
+                VALUES (?, '1', '1', 'sequential', 0.0, NULL, NULL, 2000)
+                """,
+                arguments: [originalScanId]
+            )
+        }
+
+        let chunkDir = store.chunkDirectory(chunkIndex: 0)
+        try FileManager.default.createDirectory(at: chunkDir, withIntermediateDirectories: true)
+        try metadata.backup(to: store.scanMetadataSnapshotURL(chunkIndex: 0))
+
+        let summary = try ScanMetadataDatabase.prepareChunkSnapshot(
+            at: store.scanMetadataSnapshotURL(chunkIndex: 0),
+            chunkScanId: chunkScanId,
+            startedAt: Date(timeIntervalSince1970: 1.5),
+            endedAt: Date(timeIntervalSince1970: 2.5)
+        )
+
+        #expect(summary.scanId == chunkScanId)
+        #expect(summary.keyframeCount == 1)
+        #expect(summary.branchMarkCount == 1)
+        #expect(summary.branchEdgeCount == 1)
+
+        let snapshot = try DatabaseQueue(path: store.scanMetadataSnapshotURL(chunkIndex: 0).path)
+        try snapshot.read { db in
+            let sessionId = try String.fetchOne(db, sql: "SELECT id FROM scan_session")
+            let seqs = try Int.fetchAll(db, sql: "SELECT seq FROM keyframe_meta ORDER BY seq")
+            let branchScanId = try String.fetchOne(db, sql: "SELECT scan_id FROM branch_mark LIMIT 1")
+            #expect(sessionId == chunkScanId)
+            #expect(seqs == [2])
+            #expect(branchScanId == chunkScanId)
+        }
     }
 }

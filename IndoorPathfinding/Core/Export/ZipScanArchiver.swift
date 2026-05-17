@@ -17,7 +17,6 @@ struct ZipScanArchiver: ScanArchiver {
     /// Sprint 90 live_rtabmap: mp4/poses.bin 제거 (iOS 라이브 RTAB-Map만 사용).
     static let optionalFiles: [String] = [
         "manifest.json",
-        "rtabmap.db",
     ]
 
     /// 용량 확인용 provider. 테스트에서 override 가능.
@@ -33,6 +32,21 @@ struct ZipScanArchiver: ScanArchiver {
         scanId: String,
         progress: @Sendable @escaping (ArchiveProgress) -> Void
     ) async throws {
+        try archiveBlocking(
+            scanDirectory: scanDirectory,
+            destination: destination,
+            scanId: scanId,
+            progress: progress
+        )
+    }
+
+    /// Synchronous implementation for callers that already moved file I/O off the main actor.
+    func archiveBlocking(
+        scanDirectory: URL,
+        destination: URL,
+        scanId: String,
+        progress: @Sendable @escaping (ArchiveProgress) -> Void
+    ) throws {
         let fm = FileManager.default
 
         guard fm.fileExists(atPath: scanDirectory.path) else {
@@ -77,10 +91,11 @@ struct ZipScanArchiver: ScanArchiver {
 
         for entry in plan.entries {
             let entryProgress = Foundation.Progress(totalUnitCount: entry.byteCount)
+            let processedBeforeEntry = processed
 
             // KVO 관찰: completedUnitCount 변화마다 콜백 호출
             let observation = entryProgress.observe(\.completedUnitCount, options: [.new]) { p, _ in
-                let snap = processed + p.completedUnitCount
+                let snap = processedBeforeEntry + p.completedUnitCount
                 progress(ArchiveProgress(processedBytes: snap, totalBytes: totalBytes))
             }
             defer { observation.invalidate() }

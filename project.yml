@@ -74,9 +74,10 @@ targets:
         UILaunchScreen: {}
         NSCameraUsageDescription: "실내 스캔과 AR 길찾기에 카메라를 사용합니다."
         NSLocationWhenInUseUsageDescription: "VPS 초기 측위 보조에 위치를 사용합니다."
+        NSLocalNetworkUsageDescription: "로컬 개발 서버와 통신하기 위해 같은 네트워크의 Mac에 연결합니다."
         NSMotionUsageDescription: "ARKit 자세 추정에 모션 센서를 사용합니다."
         NSPhotoLibraryAddUsageDescription: "스캔 디버그 이미지 저장을 위해 사진 라이브러리에 접근합니다."
-        # 운영 서버가 평문 HTTP (218.150.183.198:8080) 라 ATS 예외 필요.
+        # 로컬 개발 서버가 평문 HTTP라 ATS 예외 필요.
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         UIRequiredDeviceCapabilities:

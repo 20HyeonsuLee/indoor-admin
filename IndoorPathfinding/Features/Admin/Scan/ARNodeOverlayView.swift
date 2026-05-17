@@ -8,7 +8,7 @@ import os.log
 /// 정식 노드/엣지 그리기는 MarkARSceneOverlay(SCNNode)로 이관됨. 이 뷰는 다음만 담당:
 ///   1. **Debug R/P dots**: rawCornerTapDebugMode ON 시 magenta R (raw tap) + yellow P (raycast projection).
 ///      PROJECT_DEBUG OSLog 출력 포함 (AC-AR3D-project-debug).
-///   2. **Corner tap 수신 layer**: corner 모드일 때 `Color.clear.contentShape` + `onTapGesture`.
+///   2. **Placement tap 수신 layer**: 마킹 도구가 활성일 때 `Color.clear.contentShape` + `onTapGesture`.
 ///
 /// 제거된 것: ForEach(markingState.nodes) dot, drawEdges Canvas, preview 점선, nodeView, edgeStyle.
 struct ARNodeOverlayView: View {
@@ -18,6 +18,7 @@ struct ARNodeOverlayView: View {
     let viewportSize: CGSize
     var onNodeTap: ((BranchMarkNodeId) -> Void)?
     var onCornerTap: ((CGPoint) -> Void)?
+    var onPlacementTap: ((CGPoint) -> Void)?
     /// Debug: raw corner tap mode일 때 화면 탭 좌표 그대로 magenta dot.
     /// raycast → world → projection 경로 우회. 입력 좌표 자체의 SwiftUI 정합성 검증.
     var debugRawCornerTaps: [CGPoint] = []
@@ -37,7 +38,7 @@ struct ARNodeOverlayView: View {
             if let frame = arFrame {
                 raycastDebugLayer(frame: frame)
             }
-            cornerTapLayer
+            placementTapLayer
         }
     }
 
@@ -107,14 +108,19 @@ struct ARNodeOverlayView: View {
         }
     }
 
-    /// 코너 탭 수신 layer (corner 모드일 때만, cycle_4 보존)
+    /// 화면 탭 수신 layer. corner 모드는 기존 handler를 우선하고,
+    /// corridor/POI/connector는 placement handler로 보낸다.
     @ViewBuilder
-    private var cornerTapLayer: some View {
-        if onCornerTap != nil {
+    private var placementTapLayer: some View {
+        if onCornerTap != nil || onPlacementTap != nil {
             Color.clear
                 .contentShape(Rectangle())
                 .onTapGesture { location in
-                    onCornerTap?(location)
+                    if let onCornerTap {
+                        onCornerTap(location)
+                    } else {
+                        onPlacementTap?(location)
+                    }
                 }
         }
     }

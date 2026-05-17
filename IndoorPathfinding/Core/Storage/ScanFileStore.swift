@@ -126,6 +126,11 @@ struct ScanFileStore {
         uploadStagingDirectory.appendingPathComponent("chunk_\(chunkSessionId.uuidString).zip")
     }
 
+    /// background URLSession 에 넘길 multipart body 파일 URL.
+    static func chunkMultipartURL(chunkSessionId: UUID) -> URL {
+        uploadStagingDirectory.appendingPathComponent("chunk_\(chunkSessionId.uuidString).multipart")
+    }
+
     /// chunk manifest JSON URL.
     static func chunkManifestURL(chunkSessionId: UUID) -> URL {
         uploadStagingDirectory.appendingPathComponent("chunk_\(chunkSessionId.uuidString).manifest.json")

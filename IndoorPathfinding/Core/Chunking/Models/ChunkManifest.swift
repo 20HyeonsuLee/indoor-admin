@@ -19,6 +19,19 @@ struct ChunkManifest: Codable, Sendable {
     let rtabmapDBPath: String
     /// archive 완료 후 set.
     var zipPath: String?
+    /// 서버 ingest 에 넘길 scan_id. ZIP root / manifest.json / scan_session.id 와 같아야 한다.
+    var uploadScanId: String?
+    /// chunk archive 안 scan_metadata.db 기준 keyframe_meta row 수.
+    var archivedKeyframeCount: Int?
+    var archivedBranchMarkCount: Int?
+    var archivedBranchEdgeCount: Int?
+    /// background upload에 넘긴 ZIP 파일 크기.
+    var zipByteCount: Int64?
+    /// URLSession upload task 시작/종료 시각.
+    var uploadStartedAt: Date?
+    var uploadCompletedAt: Date?
+    /// 마지막 HTTP status. 네트워크 오류면 nil.
+    var lastHTTPStatus: Int?
     /// upload 성공 후 V1ScanChunk.id.
     var serverChunkId: UUID?
     var uploadState: ChunkUploadState

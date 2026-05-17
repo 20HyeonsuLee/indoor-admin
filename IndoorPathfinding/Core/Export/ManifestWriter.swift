@@ -161,6 +161,37 @@ enum ManifestWriter {
         )
     }
 
+    /// Chunk upload 전용 live_rtabmap manifest.
+    /// chunk archive 는 session 전체가 아니라 시간창으로 잘린 sidecar/rtabmap.db 를 보낸다.
+    static func makeChunkLiveRtabmap(
+        scanId: String,
+        sidecarKeyframeMetaCount: Int,
+        clientAppVersion: String
+    ) -> ScanManifest {
+        ScanManifest(
+            metadataVersion: 9,
+            scanId: scanId,
+            mode: "live_rtabmap",
+            keyframesIncluded: false,
+            keyframeImageSource: "rtabmap_db",
+            poiImageSource: "poi_photo_image_blob",
+            rtabmapAcceptedFrameCount: 0,
+            sidecarKeyframeMetaCount: sidecarKeyframeMetaCount,
+            droppedRejectFrameImageCount: 0,
+            rtabmapReprocessed: false,
+            clientAppVersion: clientAppVersion,
+            videoPath: nil,
+            posesPath: nil,
+            videoCodec: nil,
+            videoFpsNominal: nil,
+            poseRecordCount: nil,
+            intrinsicsFx: nil,
+            intrinsicsFy: nil,
+            intrinsicsCx: nil,
+            intrinsicsCy: nil
+        )
+    }
+
     /// Legacy Sprint 65 v6 — raw_arkit_recording mode (deprecate, 호환용).
     static func make(
         scanId: String,

@@ -59,6 +59,10 @@ struct BranchMarkEdge: Identifiable, Equatable {
 
 enum UndoAction: Equatable {
     case addNode(nodeId: BranchMarkNodeId)
+    /// POI 마크 추가. id = poi_mark.id. cascade로 poi_photo도 함께 제거.
+    case addPoi(id: Int64)
+    /// interfloor_mark 추가. id = interfloor_mark.id.
+    case addInterfloor(id: Int64)
 }
 
 // MARK: - Hint Banner Case
@@ -324,20 +328,34 @@ struct MarkingState {
 
     // MARK: - Undo
 
-    /// 최근 count개 노드 + 연결 edge cascade 제거.
-    mutating func undoLast(count: Int = 1) {
+    /// 외부 (POI/interfloor) 추가 시 undo stack 에 등록.
+    /// branch_mark 는 addCorridor/addCorner 가 직접 append 하므로 호출 불필요.
+    mutating func recordExternalAdd(_ action: UndoAction) {
+        undoStack.append(action)
+    }
+
+    /// 최근 count 개 action 을 pop 하고 in-memory 상태에서 제거 (branch_mark 만 nodes 배열 영향).
+    /// 반환된 action 리스트는 호출자가 DB delete 분기 처리.
+    @discardableResult
+    mutating func undoLast(count: Int = 1) -> [UndoAction] {
+        var popped: [UndoAction] = []
         var remaining = count
         while remaining > 0, !undoStack.isEmpty {
             let action = undoStack.removeLast()
             switch action {
             case .addNode(let nodeId):
                 deleteNodeInternal(nodeId)
+            case .addPoi, .addInterfloor:
+                // POI / interfloor 는 MarkingState.nodes 에 없음. DB 제거만 필요.
+                break
             }
+            popped.append(action)
             remaining -= 1
         }
         // lastNonCornerNodeId 갱신
         lastNonCornerNodeId = nodes.last(where: { $0.nodeType == .corridor })?.id
         refreshHintBanner()
+        return popped
     }
 
     // MARK: - Delete
@@ -460,6 +478,101 @@ struct MarkingState {
             outlierEdgeNodeOrderPairs: outlierPairs,
             transitionDistanceExceededPairs: transitionPairs
         )
+    }
+
+    // MARK: - Hit-test (재연결 흐름 — edge split / node anchor)
+
+    /// world hit point에 가까운 노드 반환. maxDistance(world meters) 안에서 가장 가까운 것.
+    func hitTestNode(at worldPoint: SIMD3<Float>, maxDistance: Float) -> BranchMarkNodeId? {
+        var best: (BranchMarkNodeId, Float)?
+        for node in nodes {
+            let d = distance(worldPoint, node.position)
+            guard d <= maxDistance else { continue }
+            if best == nil || d < best!.1 { best = (node.id, d) }
+        }
+        return best?.0
+    }
+
+    /// world hit point가 어떤 edge 위에 있는지 hit-test.
+    /// 선분 내부(t ∈ [0,1])이고 foot까지 거리가 maxDistance 이내면 match.
+    /// corner_polygon edge는 split 차단을 위해 제외한다.
+    func hitTestEdge(at worldPoint: SIMD3<Float>, maxDistance: Float) -> (edgeId: UUID, foot: SIMD3<Float>)? {
+        var best: (UUID, SIMD3<Float>, Float)?
+        for edge in edges where edge.kind != .cornerPolygon {
+            guard let a = nodes.first(where: { $0.id == edge.from })?.position,
+                  let b = nodes.first(where: { $0.id == edge.to })?.position else { continue }
+            let ab = b - a
+            let lenSq = simd_dot(ab, ab)
+            guard lenSq > 1e-6 else { continue }
+            let t = simd_dot(worldPoint - a, ab) / lenSq
+            guard t >= 0, t <= 1 else { continue }
+            let foot = a + t * ab
+            let d = simd_distance(worldPoint, foot)
+            guard d <= maxDistance else { continue }
+            if best == nil || d < best!.2 { best = (edge.id, foot, d) }
+        }
+        return best.map { (edgeId: $0.0, foot: $0.1) }
+    }
+
+    /// 이미 존재하는 노드 위에 클릭한 경우 — 그 노드를 sequential 시작점으로 anchor.
+    /// 새 노드 생성/edge 추가 없음. 다음 corridor tap이 이 노드에서 시작하는 sequential edge를 만듦.
+    mutating func anchorAtNode(nodeId: BranchMarkNodeId) {
+        guard nodes.contains(where: { $0.id == nodeId }) else { return }
+        lastNonCornerNodeId = nodeId
+        connectMode = .sequential
+    }
+
+    /// edge 위 클릭 → 해당 edge를 두 segment로 split. 새 corridor 노드는 sequential 시작점.
+    /// 새 노드 widthM = A·B width 평균 (둘 다 있을 때). markSessionId = 새 UUID.
+    /// - Returns: 생성된 새 노드. corner_polygon edge거나 매칭 실패면 nil.
+    @discardableResult
+    mutating func splitEdge(
+        edgeId: UUID,
+        newNodeId: BranchMarkNodeId,
+        at position: SIMD3<Float>
+    ) -> BranchMarkNode? {
+        guard let edgeIndex = edges.firstIndex(where: { $0.id == edgeId }) else { return nil }
+        let edge = edges[edgeIndex]
+        guard edge.kind != .cornerPolygon else { return nil }
+        guard let aIdx = nodes.firstIndex(where: { $0.id == edge.from }),
+              let bIdx = nodes.firstIndex(where: { $0.id == edge.to }) else { return nil }
+        let nodeA = nodes[aIdx]
+        let nodeB = nodes[bIdx]
+        let avgWidth: Double? = {
+            switch (nodeA.widthM, nodeB.widthM) {
+            case let (wa?, wb?): return (wa + wb) / 2.0
+            case let (wa?, nil): return wa
+            case let (nil, wb?): return wb
+            default: return nil
+            }
+        }()
+        let resolvedWidth = avgWidth ?? lastCorridorWidthM
+        let newNode = BranchMarkNode(
+            id: newNodeId,
+            nodeType: .corridor,
+            widthM: resolvedWidth,
+            connectHint: nil,
+            connectNodeId: nil,
+            markSessionId: UUID(),
+            position: position,
+            order: nodes.count + 1
+        )
+        nodes.append(newNode)
+        undoStack.append(.addNode(nodeId: newNodeId))
+
+        // 기존 edge 제거 + 두 새 edge 추가
+        edges.remove(at: edgeIndex)
+        let distA = Double(distance(position, nodeA.position))
+        let distB = Double(distance(position, nodeB.position))
+        let kindA = resolveEdgeKind(fromWidth: nodeA.widthM, toWidth: resolvedWidth, distance: distA) ?? .sequential
+        let kindB = resolveEdgeKind(fromWidth: resolvedWidth, toWidth: nodeB.widthM, distance: distB) ?? .sequential
+        edges.append(BranchMarkEdge(from: nodeA.id, to: newNodeId, kind: kindA, lengthM: distA))
+        edges.append(BranchMarkEdge(from: newNodeId, to: nodeB.id, kind: kindB, lengthM: distB))
+
+        lastNonCornerNodeId = newNodeId
+        lastCorridorWidthM = resolvedWidth
+        connectMode = .sequential
+        return newNode
     }
 
     // MARK: - Private Helpers

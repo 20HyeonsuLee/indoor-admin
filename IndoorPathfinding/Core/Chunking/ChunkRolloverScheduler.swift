@@ -1,11 +1,11 @@
 import Foundation
 import OSLog
 
-/// 90초 wall-clock timer 기반 chunk rollover 오케스트레이터.
+/// 30초 wall-clock timer 기반 chunk rollover 오케스트레이터.
 /// ADR D1/D2 — 시간 기반 chunk, 독립 DB + 시간 overlap window.
 ///
 /// 책임:
-/// - 90s timer 가동/정지.
+/// - 30s timer 가동/정지.
 /// - rollover 시퀀스: throttle pause → 0.5s drain → bridge.rolloverChunk → upload enqueue → aggressive resume.
 /// - 1s overlap window 후 normal mode 복귀.
 ///
@@ -50,7 +50,7 @@ final class ChunkRolloverScheduler {
 
     // MARK: - Configuration
 
-    static let chunkDuration: TimeInterval = 90.0
+    static let chunkDuration: TimeInterval = 30.0
     static let drainWaitSeconds: TimeInterval = 0.5
     static let defaultOverlapWindowSeconds: TimeInterval = 1.0
 
@@ -101,7 +101,7 @@ final class ChunkRolloverScheduler {
 
     // MARK: - Lifecycle
 
-    /// scan 시작 시 호출. chunk_0 디렉터리를 생성하고 90s timer를 가동한다.
+    /// scan 시작 시 호출. chunk_0 디렉터리를 생성하고 30s timer를 가동한다.
     func start() throws {
         guard timer == nil else { return }
         currentChunkIndex = 0
@@ -245,7 +245,7 @@ final class ChunkRolloverScheduler {
             }
         }
 
-        // 10. 다음 90s timer 예약
+        // 10. 다음 30s timer 예약
         scheduleTimer()
 
         Self.logger.info("rollover complete: chunk \(closingIndex) closed, chunk \(nextIndex) started.")
