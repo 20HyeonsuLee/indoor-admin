@@ -52,11 +52,15 @@ struct AdminFloorDetailView: View {
             // 스캔 캡처
             Section("스캔 캡처") {
                 Button {
+                    let effectiveAreaId = workspace.effectiveAreaId(floorId: floor.id)
+                    let areaLabel = floorAreas.first { $0.areaId == effectiveAreaId }?.label ?? "default"
                     scanLaunchContext = ScanLaunchContext(
                         buildingId: building.id,
                         floorId: floor.id,
                         floorName: floor.displayName,
-                        floorLevel: floor.level
+                        floorLevel: floor.level,
+                        areaId: effectiveAreaId,
+                        areaLabel: areaLabel
                     )
                 } label: {
                     Label("스캔 시작", systemImage: "video.badge.plus")

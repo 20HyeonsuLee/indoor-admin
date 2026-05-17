@@ -9,6 +9,8 @@ struct ScanLaunchContext: Identifiable, Hashable {
     let floorId: UUID
     let floorName: String
     let floorLevel: Int
+    let areaId: UUID?
+    let areaLabel: String
 
     /// HUD에 보여줄 한 줄 컨텍스트.
     var uploadSummary: String {
@@ -17,12 +19,16 @@ struct ScanLaunchContext: Identifiable, Hashable {
 
     /// scan_session.notes 컬럼에 저장될 JSON 문자열.
     var uploadNotesJSON: String? {
-        let payload: [String: String] = [
+        var payload: [String: String] = [
             "buildingId": buildingId.uuidString,
             "floorId": floorId.uuidString,
             "floorName": floorName,
-            "floorLevel": String(floorLevel)
+            "floorLevel": String(floorLevel),
+            "areaLabel": areaLabel
         ]
+        if let areaId {
+            payload["areaId"] = areaId.uuidString
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
               let s = String(data: data, encoding: .utf8) else { return nil }
         return s

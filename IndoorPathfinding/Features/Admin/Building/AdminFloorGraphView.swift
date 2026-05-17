@@ -7,6 +7,16 @@ struct GraphNode: Identifiable {
     let x: Double
     let y: Double
     let label: String?
+    /// area별 색상 분리에 사용. single-area 모드에서는 nil.
+    let areaId: UUID?
+
+    init(id: UUID, x: Double, y: Double, label: String?, areaId: UUID? = nil) {
+        self.id = id
+        self.x = x
+        self.y = y
+        self.label = label
+        self.areaId = areaId
+    }
 }
 
 struct GraphEdge: Identifiable {
@@ -54,6 +64,28 @@ struct FloorGraphPayload {
     var pois: [GraphPOI]
     var passages: [GraphPassage]
     var bounds: GraphBounds
+    /// area별 색상 매핑 (multi-area일 때만 채워짐). key = areaId.
+    var areaColors: [UUID: Color]
+    /// legend용: (areaId, label) 순서 배열.
+    var areaLegend: [(id: UUID, label: String)]
+
+    init(
+        nodes: [GraphNode],
+        edges: [GraphEdge],
+        pois: [GraphPOI],
+        passages: [GraphPassage],
+        bounds: GraphBounds,
+        areaColors: [UUID: Color] = [:],
+        areaLegend: [(id: UUID, label: String)] = []
+    ) {
+        self.nodes = nodes
+        self.edges = edges
+        self.pois = pois
+        self.passages = passages
+        self.bounds = bounds
+        self.areaColors = areaColors
+        self.areaLegend = areaLegend
+    }
 }
 
 // MARK: - View
@@ -367,39 +399,47 @@ struct AdminFloorGraphView: View {
         let scaleY = (Double(size.height) - padding * 2) / bounds.height
         let viewScale = min(scaleX, scaleY)
 
-        graphContent(p, size: size, bounds: bounds, viewScale: viewScale, padding: padding)
-            .scaleEffect(zoom, anchor: .center)
-            .offset(pan)
-            .clipped()
-            .contentShape(Rectangle())
-            // pinch zoom
-            .simultaneousGesture(
-                MagnificationGesture()
-                    .onChanged { value in
-                        zoom = max(0.5, min(8.0, lastZoom * value))
+        ZStack(alignment: .topTrailing) {
+            graphContent(p, size: size, bounds: bounds, viewScale: viewScale, padding: padding)
+                .scaleEffect(zoom, anchor: .center)
+                .offset(pan)
+                .clipped()
+                .contentShape(Rectangle())
+                // pinch zoom
+                .simultaneousGesture(
+                    MagnificationGesture()
+                        .onChanged { value in
+                            zoom = max(0.5, min(8.0, lastZoom * value))
+                        }
+                        .onEnded { _ in lastZoom = zoom }
+                )
+                // drag pan (minimumDistance 로 tap 과 분기)
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 8)
+                        .onChanged { value in
+                            pan = CGSize(
+                                width: lastPan.width + value.translation.width,
+                                height: lastPan.height + value.translation.height
+                            )
+                        }
+                        .onEnded { _ in lastPan = pan }
+                )
+                // double-tap reset
+                .onTapGesture(count: 2) {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        zoom = 1.0
+                        lastZoom = 1.0
+                        pan = .zero
+                        lastPan = .zero
                     }
-                    .onEnded { _ in lastZoom = zoom }
-            )
-            // drag pan (minimumDistance 로 tap 과 분기)
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 8)
-                    .onChanged { value in
-                        pan = CGSize(
-                            width: lastPan.width + value.translation.width,
-                            height: lastPan.height + value.translation.height
-                        )
-                    }
-                    .onEnded { _ in lastPan = pan }
-            )
-            // double-tap reset
-            .onTapGesture(count: 2) {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    zoom = 1.0
-                    lastZoom = 1.0
-                    pan = .zero
-                    lastPan = .zero
                 }
+
+            // Multi-area legend (우상단 코너, areaLegend 있을 때만)
+            if !p.areaLegend.isEmpty {
+                areaLegendView(p)
+                    .padding(8)
             }
+        }
     }
 
     @ViewBuilder
@@ -433,17 +473,19 @@ struct AdminFloorGraphView: View {
                     let isRoute = routeNodeIds.contains(node.id.uuidString)
                     let isStart = node.id == startNodeId
 
+                    // area별 색상 (multi-area) 또는 기본 gray
+                    let baseColor: Color = node.areaId.flatMap { p.areaColors[$0] } ?? .gray
+
                     if isStart {
-                        // 출발지: 노란 ring
                         ctx.fill(Path(ellipseIn: rect), with: .color(.yellow))
                         let ring = CGRect(x: pt.x - 7, y: pt.y - 7, width: 14, height: 14)
                         ctx.stroke(Path(ellipseIn: ring), with: .color(.yellow.opacity(0.6)), lineWidth: 2)
                     } else if isRoute {
                         ctx.fill(Path(ellipseIn: rect), with: .color(.red))
                     } else if hasRoute {
-                        ctx.fill(Path(ellipseIn: rect), with: .color(.gray.opacity(0.3)))
+                        ctx.fill(Path(ellipseIn: rect), with: .color(baseColor.opacity(0.3)))
                     } else {
-                        ctx.fill(Path(ellipseIn: rect), with: .color(.gray))
+                        ctx.fill(Path(ellipseIn: rect), with: .color(baseColor))
                     }
                 }
             }
@@ -498,6 +540,27 @@ struct AdminFloorGraphView: View {
         }
     }
 
+    // MARK: - Area Legend
+
+    @ViewBuilder
+    private func areaLegendView(_ p: FloorGraphPayload) -> some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            ForEach(p.areaLegend, id: \.id) { entry in
+                HStack(spacing: 6) {
+                    Text(entry.label)
+                        .font(.caption2)
+                        .foregroundStyle(.primary)
+                    Circle()
+                        .fill(p.areaColors[entry.id] ?? .gray)
+                        .frame(width: 10, height: 10)
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+    }
+
     private func passageSymbol(_ type: String) -> String {
         switch type.uppercased() {
         case "STAIRS", "STAIRCASE": return "◇"
@@ -519,22 +582,53 @@ struct AdminFloorGraphView: View {
         defer { isLoading = false }
 
         do {
-            // 3-way fan-out
-            async let pathTask = client.floorPath(floorId: floor.id)
             async let poisTask = client.listPOIs(buildingId: building.id)
             async let passagesTask = client.listPassages(buildingId: building.id)
 
-            let (pathResp, allPOIs, allPassages) = try await (pathTask, poisTask, passagesTask)
+            let areas = workspace.areasForFloor(floor.id)
+            let usesMultiArea = areas.count > 1
 
-            // GeoJSON Point 파싱 (dead code 블록 제거)
-            let parsedNodes: [GraphNode] = pathResp.nodes.compactMap { nd in
-                parseGraphNode(from: nd)
+            // nodes/edges 수집
+            var allNodes: [GraphNode] = []
+            var allEdges: [GraphEdge] = []
+            var areaColors: [UUID: Color] = [:]
+            var areaLegend: [(id: UUID, label: String)] = []
+            var serverBoundsAccum: [String: Double]?
+
+            if usesMultiArea {
+                for (idx, area) in areas.enumerated() {
+                    let pathResp = try await client.floorPath(floorId: floor.id, areaId: area.areaId)
+                    let color = Self.colorForAreaIndex(idx)
+                    areaColors[area.areaId] = color
+                    areaLegend.append((id: area.areaId, label: area.label))
+
+                    let parsedNodes: [GraphNode] = pathResp.nodes.compactMap { nd in
+                        parseGraphNode(from: nd, areaId: area.areaId)
+                    }
+                    let parsedEdges: [GraphEdge] = pathResp.edges.compactMap { ed in
+                        parseGraphEdge(from: ed, nodes: parsedNodes + allNodes)
+                    }
+                    allNodes.append(contentsOf: parsedNodes)
+                    allEdges.append(contentsOf: parsedEdges)
+
+                    if let sb = pathResp.bounds, serverBoundsAccum == nil {
+                        serverBoundsAccum = sb
+                    } else if let sb = pathResp.bounds, var accum = serverBoundsAccum {
+                        accum["minX"] = min(accum["minX"] ?? sb["minX"]!, sb["minX"]!)
+                        accum["minY"] = min(accum["minY"] ?? sb["minY"]!, sb["minY"]!)
+                        accum["maxX"] = max(accum["maxX"] ?? sb["maxX"]!, sb["maxX"]!)
+                        accum["maxY"] = max(accum["maxY"] ?? sb["maxY"]!, sb["maxY"]!)
+                        serverBoundsAccum = accum
+                    }
+                }
+            } else {
+                let pathResp = try await client.floorPath(floorId: floor.id)
+                allNodes = pathResp.nodes.compactMap { parseGraphNode(from: $0) }
+                allEdges = pathResp.edges.compactMap { parseGraphEdge(from: $0, nodes: allNodes) }
+                serverBoundsAccum = pathResp.bounds
             }
 
-            // Edges
-            let parsedEdges: [GraphEdge] = pathResp.edges.compactMap { ed in
-                parseGraphEdge(from: ed, nodes: parsedNodes)
-            }
+            let (allPOIs, allPassages) = try await (poisTask, passagesTask)
 
             // POIs filtered by floor
             let filteredPOIs: [GraphPOI] = allPOIs
@@ -553,9 +647,6 @@ struct AdminFloorGraphView: View {
 
             // Passages filtered by floor involvement (M5: strongly-typed V1PassageSegment 사용)
             let filteredPassages: [GraphPassage] = allPassages.compactMap { p in
-                // 서버 schema (vertical_connector_catalog_service.py:70):
-                //   level_id = "floor:{UUID}" 형식, floor_id 는 None.
-                // → "floor:" prefix 를 떼고 UUID 부분만 비교한다.
                 let floorIdStr = floor.id.uuidString.uppercased()
                 func levelMatchesFloor(_ levelId: String?) -> Bool {
                     guard let raw = levelId?.uppercased() else { return false }
@@ -570,7 +661,6 @@ struct AdminFloorGraphView: View {
                       let sx = seg.x,
                       let sy = seg.y else { return nil }
 
-                // F2: routeNodeId는 String? → UUID? lazy 변환 (변환 실패 시 nil)
                 let routeNodeId: UUID? = seg.routeNodeId.flatMap { UUID(uuidString: $0) }
 
                 return GraphPassage(
@@ -584,22 +674,24 @@ struct AdminFloorGraphView: View {
             }
 
             // Bounds
-            var bounds = parsedNodes.isEmpty ? GraphBounds.empty : boundsFromNodes(parsedNodes, pois: filteredPOIs)
-            if let serverBounds = pathResp.bounds {
+            var bounds = allNodes.isEmpty ? GraphBounds.empty : boundsFromNodes(allNodes, pois: filteredPOIs)
+            if let sb = serverBoundsAccum {
                 bounds = GraphBounds(
-                    minX: serverBounds["minX"] ?? bounds.minX,
-                    minY: serverBounds["minY"] ?? bounds.minY,
-                    maxX: serverBounds["maxX"] ?? bounds.maxX,
-                    maxY: serverBounds["maxY"] ?? bounds.maxY
+                    minX: sb["minX"] ?? bounds.minX,
+                    minY: sb["minY"] ?? bounds.minY,
+                    maxX: sb["maxX"] ?? bounds.maxX,
+                    maxY: sb["maxY"] ?? bounds.maxY
                 )
             }
 
             payload = FloorGraphPayload(
-                nodes: parsedNodes,
-                edges: parsedEdges,
+                nodes: allNodes,
+                edges: allEdges,
                 pois: filteredPOIs,
                 passages: filteredPassages,
-                bounds: bounds
+                bounds: bounds,
+                areaColors: areaColors,
+                areaLegend: areaLegend
             )
 
         } catch {
@@ -607,7 +699,15 @@ struct AdminFloorGraphView: View {
         }
     }
 
-    private func parseGraphNode(from dict: [String: V1AnyValue]) -> GraphNode? {
+    // MARK: - Area Color
+
+    /// HSL hue rotation으로 area별 구별되는 색상 생성.
+    static func colorForAreaIndex(_ index: Int) -> Color {
+        let hues: [Color] = [.blue, .green, .purple, .orange, .pink, .cyan, .mint, .indigo]
+        return hues[index % hues.count]
+    }
+
+    private func parseGraphNode(from dict: [String: V1AnyValue], areaId: UUID? = nil) -> GraphNode? {
         // GeoJSON Feature format: geometry.coordinates[0,1]
         // M1: convertFromSnakeCase 제거 후 서버가 보내는 원본 키 그대로 사용
         //     서버 GeoJSON properties 키: "node_id", "node_type" (snake_case)
@@ -625,7 +725,8 @@ struct AdminFloorGraphView: View {
             return GraphNode(
                 id: UUID(uuidString: idStr) ?? UUID(),
                 x: x, y: y,
-                label: label
+                label: label,
+                areaId: areaId
             )
         }
 
@@ -635,7 +736,8 @@ struct AdminFloorGraphView: View {
             return GraphNode(
                 id: UUID(uuidString: idStr) ?? UUID(),
                 x: x, y: y,
-                label: dict["label"]?.asString
+                label: dict["label"]?.asString,
+                areaId: areaId
             )
         }
 
