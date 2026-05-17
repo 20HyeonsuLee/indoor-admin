@@ -83,13 +83,19 @@ struct StreamingScanClient {
 
     // MARK: - 1. Start
 
-    func startScan(floorId: UUID, scanId: UUID? = nil, deviceInfo: String? = nil) async throws -> ScanStartResponse {
-        let url = apiV1
-            .appendingPathComponent("floors")
-            .appendingPathComponent(floorId.uuidString)
-            .appendingPathComponent("scans")
-            .appendingPathComponent("start")
-
+    func startScan(floorId: UUID, scanId: UUID? = nil, areaId: UUID? = nil, deviceInfo: String? = nil) async throws -> ScanStartResponse {
+        var components = URLComponents(
+            url: apiV1
+                .appendingPathComponent("floors")
+                .appendingPathComponent(floorId.uuidString)
+                .appendingPathComponent("scans")
+                .appendingPathComponent("start"),
+            resolvingAgainstBaseURL: false
+        )!
+        if let areaId {
+            components.queryItems = [URLQueryItem(name: "areaId", value: areaId.uuidString)]
+        }
+        let url = components.url!
         let body = ScanStartRequest(
             scanId: scanId?.uuidString,
             deviceInfo: deviceInfo

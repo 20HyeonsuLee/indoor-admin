@@ -434,15 +434,17 @@ final class ScanStore {
             // 이로써 scan_metadata.db 내부 scan_id 컬럼 / manifest.scan_id / path scanId
             // 모두 일치 — 서버 sidecar_parser ScanIdMismatch 회피.
             let injectScanId = UUID(uuidString: self.scanId)
-            NSLog("[ScanStore-Streaming] start: calling startScan floorId=%@ scanId=%@",
-                  floorId.uuidString, self.scanId)
+            let areaId = context.areaId
+            NSLog("[ScanStore-Streaming] start: calling startScan floorId=%@ scanId=%@ areaId=%@",
+                  floorId.uuidString, self.scanId, areaId?.uuidString ?? "nil")
             // 서버에 scan session 개시 — Task로 비동기 호출
             pushLoopTask = Task { [weak self] in
                 guard let self else { return }
                 do {
                     let response = try await client.startScan(
                         floorId: floorId,
-                        scanId: injectScanId
+                        scanId: injectScanId,
+                        areaId: areaId
                     )
                     NSLog("[ScanStore-Streaming] startScan OK scanId=%@ state=%@",
                           response.scanId, response.state)

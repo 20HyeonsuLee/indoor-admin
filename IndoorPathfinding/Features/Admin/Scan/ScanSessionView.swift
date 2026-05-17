@@ -886,7 +886,9 @@ enum ScanToolMode: String, CaseIterable, Identifiable {
             buildingId: UUID(),
             floorId: UUID(),
             floorName: "1F",
-            floorLevel: 1
+            floorLevel: 1,
+            areaId: nil,
+            areaLabel: "default"
         ),
         onFinished: { _ in },
         onDiscarded: {}
