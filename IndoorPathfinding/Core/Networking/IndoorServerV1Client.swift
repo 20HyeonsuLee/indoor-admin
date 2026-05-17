@@ -241,6 +241,19 @@ struct V1MergeRequest: Encodable {
     }
 }
 
+// MARK: - Area DTOs
+
+struct V1FloorArea: Decodable, Identifiable {
+    let areaId: UUID
+    let floorId: UUID
+    let areaIndex: Int
+    let label: String
+    let isDefault: Bool
+    let createdAt: String
+
+    var id: UUID { areaId }
+}
+
 // MARK: - Client
 
 // M11: 서버 v1 에러 envelope {"code": "...", "message": "..."}
@@ -334,13 +347,21 @@ struct IndoorServerV1Client {
 
     // MARK: - Scan Chunks
 
-    func listChunks(floorId: UUID) async throws -> [V1ScanChunk] {
-        try await get(url: v1.appendingPathComponent("floors/\(floorId.uuidString)/scans/chunks"))
+    func listChunks(floorId: UUID, areaId: UUID? = nil) async throws -> [V1ScanChunk] {
+        var components = URLComponents(url: v1.appendingPathComponent("floors/\(floorId.uuidString)/scans/chunks"), resolvingAgainstBaseURL: false)!
+        if let areaId = areaId {
+            components.queryItems = [URLQueryItem(name: "areaId", value: areaId.uuidString)]
+        }
+        return try await get(url: components.url!)
     }
 
-    func uploadChunk(floorId: UUID, fileURL: URL, scanId: String? = nil) async throws -> V1ScanChunk {
+    func uploadChunk(floorId: UUID, fileURL: URL, scanId: String? = nil, areaId: UUID? = nil) async throws -> V1ScanChunk {
         let boundary = "Boundary-\(UUID().uuidString)"
-        let url = v1.appendingPathComponent("floors/\(floorId.uuidString)/scans/chunks")
+        let url: URL = {
+            var c = URLComponents(url: v1.appendingPathComponent("floors/\(floorId.uuidString)/scans/chunks"), resolvingAgainstBaseURL: false)!
+            if let areaId = areaId { c.queryItems = [URLQueryItem(name: "areaId", value: areaId.uuidString)] }
+            return c.url!
+        }()
 
         let bodyData = try buildChunkMultipart(fileURL: fileURL, scanId: scanId, boundary: boundary)
 
@@ -362,29 +383,46 @@ struct IndoorServerV1Client {
 
     // MARK: - Merge & Process
 
-    func mergeChunks(floorId: UUID, chunkIds: [UUID]) async throws -> V1MergedScan {
-        try await post(
-            url: v1.appendingPathComponent("floors/\(floorId.uuidString)/scans/merge"),
-            body: V1MergeRequest(chunkIds: chunkIds)
-        )
+    func mergeChunks(floorId: UUID, chunkIds: [UUID], areaId: UUID? = nil) async throws -> V1MergedScan {
+        var components = URLComponents(url: v1.appendingPathComponent("floors/\(floorId.uuidString)/scans/merge"), resolvingAgainstBaseURL: false)!
+        if let areaId = areaId {
+            components.queryItems = [URLQueryItem(name: "areaId", value: areaId.uuidString)]
+        }
+        return try await post(url: components.url!, body: V1MergeRequest(chunkIds: chunkIds))
     }
 
-    func mergeStatus(floorId: UUID) async throws -> V1MergedScan {
-        try await get(url: v1.appendingPathComponent("floors/\(floorId.uuidString)/scans/merge/status"))
+    func mergeStatus(floorId: UUID, areaId: UUID? = nil) async throws -> V1MergedScan {
+        var components = URLComponents(url: v1.appendingPathComponent("floors/\(floorId.uuidString)/scans/merge/status"), resolvingAgainstBaseURL: false)!
+        if let areaId = areaId {
+            components.queryItems = [URLQueryItem(name: "areaId", value: areaId.uuidString)]
+        }
+        return try await get(url: components.url!)
     }
 
-    func processFloor(floorId: UUID) async throws -> V1ProcessingStatus {
-        try await postEmpty(url: v1.appendingPathComponent("floors/\(floorId.uuidString)/process"))
+    func processFloor(floorId: UUID, areaId: UUID? = nil) async throws -> V1ProcessingStatus {
+        var components = URLComponents(url: v1.appendingPathComponent("floors/\(floorId.uuidString)/process"), resolvingAgainstBaseURL: false)!
+        if let areaId = areaId {
+            components.queryItems = [URLQueryItem(name: "areaId", value: areaId.uuidString)]
+        }
+        return try await postEmpty(url: components.url!)
     }
 
-    func processStatus(floorId: UUID) async throws -> V1ProcessingStatus {
-        try await get(url: v1.appendingPathComponent("floors/\(floorId.uuidString)/process/status"))
+    func processStatus(floorId: UUID, areaId: UUID? = nil) async throws -> V1ProcessingStatus {
+        var components = URLComponents(url: v1.appendingPathComponent("floors/\(floorId.uuidString)/process/status"), resolvingAgainstBaseURL: false)!
+        if let areaId = areaId {
+            components.queryItems = [URLQueryItem(name: "areaId", value: areaId.uuidString)]
+        }
+        return try await get(url: components.url!)
     }
 
     // MARK: - Graph
 
-    func floorPath(floorId: UUID) async throws -> V1FloorPath {
-        try await get(url: v1.appendingPathComponent("floors/\(floorId.uuidString)/path"))
+    func floorPath(floorId: UUID, areaId: UUID? = nil) async throws -> V1FloorPath {
+        var components = URLComponents(url: v1.appendingPathComponent("floors/\(floorId.uuidString)/path"), resolvingAgainstBaseURL: false)!
+        if let areaId = areaId {
+            components.queryItems = [URLQueryItem(name: "areaId", value: areaId.uuidString)]
+        }
+        return try await get(url: components.url!)
     }
 
     func listPOIs(buildingId: UUID) async throws -> [V1POI] {
@@ -548,8 +586,12 @@ struct IndoorServerV1Client {
     // MARK: - Background upload helpers (ADR D4)
 
     /// chunk upload URL. ChunkUploadQueue가 URLSession background task를 구성할 때 사용.
-    func chunkUploadURL(floorId: UUID) -> URL {
-        v1.appendingPathComponent("floors/\(floorId.uuidString)/scans/chunks")
+    func chunkUploadURL(floorId: UUID, areaId: UUID? = nil) -> URL {
+        var components = URLComponents(url: v1.appendingPathComponent("floors/\(floorId.uuidString)/scans/chunks"), resolvingAgainstBaseURL: false)!
+        if let areaId = areaId {
+            components.queryItems = [URLQueryItem(name: "areaId", value: areaId.uuidString)]
+        }
+        return components.url!
     }
 
     /// background URLSession upload task용 authorized request.
@@ -562,6 +604,22 @@ struct IndoorServerV1Client {
             forHTTPHeaderField: "Content-Type"
         )
         return request
+    }
+
+    // MARK: - Areas
+
+    func listAreas(floorId: UUID) async throws -> [V1FloorArea] {
+        try await get(url: v1.appendingPathComponent("floors/\(floorId.uuidString)/areas"))
+    }
+
+    func createArea(floorId: UUID, label: String) async throws -> V1FloorArea {
+        struct V1CreateAreaRequest: Encodable {
+            let label: String
+        }
+        return try await post(
+            url: v1.appendingPathComponent("floors/\(floorId.uuidString)/areas"),
+            body: V1CreateAreaRequest(label: label)
+        )
     }
 
     private func buildChunkMultipart(fileURL: URL, scanId: String?, boundary: String) throws -> Data {
