@@ -316,6 +316,126 @@ struct IndoorServerV1ClientTests {
         #expect(result.level == 2)
     }
 
+    // MARK: - Area: listAreas / createArea
+
+    @Test("listAreas: GET /api/v1/floors/{id}/areas 경로 검증")
+    func listAreasPath() async throws {
+        let floorId = UUID()
+        var capturedRequest: URLRequest?
+        MockURLProtocol.handler = { req in
+            capturedRequest = req
+            let data = try JSONSerialization.data(withJSONObject: [])
+            let resp = HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (resp, data)
+        }
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        let client = IndoorServerV1Client(baseURL: baseURL, token: "test", session: URLSession(configuration: config))
+
+        let areas = try await client.listAreas(floorId: floorId)
+        #expect(capturedRequest?.httpMethod == "GET")
+        #expect(capturedRequest?.url?.path == "/api/v1/floors/\(floorId.uuidString)/areas")
+        #expect(areas.isEmpty)
+    }
+
+    @Test("listAreas: V1FloorArea 디코딩 검증")
+    func listAreasDecoding() async throws {
+        let floorId = UUID()
+        let areaId = UUID()
+        let session = mockSession(json: [
+            [
+                "areaId": areaId.uuidString,
+                "floorId": floorId.uuidString,
+                "areaIndex": 0,
+                "label": "구역A",
+                "isDefault": true,
+                "createdAt": "2026-01-01T00:00:00Z"
+            ]
+        ])
+        let client = IndoorServerV1Client(baseURL: baseURL, token: "test", session: session)
+
+        let areas = try await client.listAreas(floorId: floorId)
+        #expect(areas.count == 1)
+        #expect(areas[0].areaId == areaId)
+        #expect(areas[0].label == "구역A")
+        #expect(areas[0].isDefault == true)
+        #expect(areas[0].areaIndex == 0)
+        #expect(areas[0].id == areaId)
+    }
+
+    @Test("createArea: POST /api/v1/floors/{id}/areas + body label 검증")
+    func createAreaBody() async throws {
+        let floorId = UUID()
+        let areaId = UUID()
+        var capturedRequest: URLRequest?
+        MockURLProtocol.handler = { req in
+            capturedRequest = req
+            let area: [String: Any] = [
+                "areaId": areaId.uuidString,
+                "floorId": floorId.uuidString,
+                "areaIndex": 1,
+                "label": "구역B",
+                "isDefault": false,
+                "createdAt": "2026-01-01T00:00:00Z"
+            ]
+            let data = try JSONSerialization.data(withJSONObject: area)
+            let resp = HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (resp, data)
+        }
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        let client = IndoorServerV1Client(baseURL: baseURL, token: "test", session: URLSession(configuration: config))
+
+        let result = try await client.createArea(floorId: floorId, label: "구역B")
+        #expect(capturedRequest?.httpMethod == "POST")
+        #expect(capturedRequest?.url?.path == "/api/v1/floors/\(floorId.uuidString)/areas")
+        if let body = capturedRequest?.httpBody,
+           let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+            #expect(json["label"] as? String == "구역B")
+        }
+        #expect(result.label == "구역B")
+    }
+
+    // MARK: - areaId optional 호환 검증
+
+    @Test("listChunks: areaId nil 시 query 없음")
+    func listChunksNoAreaId() async throws {
+        let floorId = UUID()
+        var capturedURL: URL?
+        MockURLProtocol.handler = { req in
+            capturedURL = req.url
+            let data = try JSONSerialization.data(withJSONObject: [])
+            let resp = HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (resp, data)
+        }
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        let client = IndoorServerV1Client(baseURL: baseURL, token: "test", session: URLSession(configuration: config))
+
+        let _ = try await client.listChunks(floorId: floorId)
+        #expect(capturedURL?.query == nil)
+        #expect(capturedURL?.path == "/api/v1/floors/\(floorId.uuidString)/scans/chunks")
+    }
+
+    @Test("listChunks: areaId 전달 시 query 포함")
+    func listChunksWithAreaId() async throws {
+        let floorId = UUID()
+        let areaId = UUID()
+        var capturedURL: URL?
+        MockURLProtocol.handler = { req in
+            capturedURL = req.url
+            let data = try JSONSerialization.data(withJSONObject: [])
+            let resp = HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (resp, data)
+        }
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        let client = IndoorServerV1Client(baseURL: baseURL, token: "test", session: URLSession(configuration: config))
+
+        let _ = try await client.listChunks(floorId: floorId, areaId: areaId)
+        #expect(capturedURL?.query == "areaId=\(areaId.uuidString)")
+    }
+
     // MARK: - Sprint 78 B-5: fetchFloorRoute
 
     @Test("fetchFloorRoute: decodesResponse — nodes/edges/totalLengthM 파싱")
