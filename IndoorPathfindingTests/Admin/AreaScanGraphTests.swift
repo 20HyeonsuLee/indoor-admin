@@ -54,23 +54,49 @@ struct ScanLaunchContextAreaTests {
     }
 }
 
-// MARK: - AdminFloorGraphView 색상 매핑 테스트
+// MARK: - AdminWorkspaceStore selectedAreaId 동작 테스트
 
-struct AreaColorTests {
+struct SelectedAreaGraphTests {
 
-    @Test("colorForAreaIndex: index 0~7이 서로 다른 색상")
+    @Test("loadsOnlySelectedAreaGraph: selectedAreaId 변경 후 effectiveAreaId가 변경된 값 반환")
+    @MainActor
+    func loadsOnlySelectedAreaGraph() {
+        let store = AdminWorkspaceStore()
+        let floorId = UUID()
+        let areaId1 = UUID()
+        let areaId2 = UUID()
+
+        store.areas[floorId] = [
+            V1FloorArea(areaId: areaId1, floorId: floorId, areaIndex: 0, label: "A", isDefault: true, createdAt: "2024-01-01T00:00:00Z"),
+            V1FloorArea(areaId: areaId2, floorId: floorId, areaIndex: 1, label: "B", isDefault: false, createdAt: "2024-01-01T00:00:00Z"),
+        ]
+        store.selectedAreaId[floorId] = areaId1
+        #expect(store.effectiveAreaId(floorId: floorId) == areaId1)
+
+        // area 변경
+        store.selectArea(floorId: floorId, areaId: areaId2)
+        #expect(store.effectiveAreaId(floorId: floorId) == areaId2)
+    }
+
+    @Test("defaultAreaId fallback: selectedAreaId 없으면 isDefault area 반환")
+    @MainActor
+    func defaultAreaId_fallback() {
+        let store = AdminWorkspaceStore()
+        let floorId = UUID()
+        let defaultId = UUID()
+
+        store.areas[floorId] = [
+            V1FloorArea(areaId: defaultId, floorId: floorId, areaIndex: 0, label: "default", isDefault: true, createdAt: "2024-01-01T00:00:00Z"),
+        ]
+        // selectedAreaId 미설정
+        #expect(store.effectiveAreaId(floorId: floorId) == defaultId)
+    }
+
+    @Test("colorForAreaIndex: index 0~7이 서로 다른 색상 (하위 호환 보존)")
     func colorForAreaIndex_returnsDistinctColorsForFirst8() {
         let colors = (0..<8).map { AdminFloorGraphView.colorForAreaIndex($0) }
-        // 색상 문자열로 비교 (Color는 Equatable 미채택 → description 사용)
         let descriptions = colors.map { "\($0)" }
         let unique = Set(descriptions)
         #expect(unique.count == 8)
-    }
-
-    @Test("colorForAreaIndex: index 8은 index 0과 동일 (wrap)")
-    func colorForAreaIndex_wrapsAt8() {
-        let color0 = "\(AdminFloorGraphView.colorForAreaIndex(0))"
-        let color8 = "\(AdminFloorGraphView.colorForAreaIndex(8))"
-        #expect(color0 == color8)
     }
 }

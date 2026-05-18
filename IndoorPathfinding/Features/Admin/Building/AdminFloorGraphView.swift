@@ -189,6 +189,9 @@ struct AdminFloorGraphView: View {
         .task {
             await loadGraph()
         }
+        .onChange(of: workspace.selectedAreaId[floor.id]) { _, _ in
+            Task { await loadGraph() }
+        }
     }
 
     // MARK: - Route Toolbar
@@ -434,8 +437,8 @@ struct AdminFloorGraphView: View {
                     }
                 }
 
-            // Multi-area legend (우상단 코너, areaLegend 있을 때만)
-            if !p.areaLegend.isEmpty {
+            // Area legend (areas > 1일 때만 우상단 chip)
+            if workspace.areasForFloor(floor.id).count > 1 {
                 areaLegendView(p)
                     .padding(8)
             }
@@ -542,19 +545,19 @@ struct AdminFloorGraphView: View {
 
     // MARK: - Area Legend
 
+    /// areas.count > 1일 때만 호출. 선택된 area label 단일 chip.
     @ViewBuilder
     private func areaLegendView(_ p: FloorGraphPayload) -> some View {
-        VStack(alignment: .trailing, spacing: 4) {
-            ForEach(p.areaLegend, id: \.id) { entry in
-                HStack(spacing: 6) {
-                    Text(entry.label)
-                        .font(.caption2)
-                        .foregroundStyle(.primary)
-                    Circle()
-                        .fill(p.areaColors[entry.id] ?? .gray)
-                        .frame(width: 10, height: 10)
-                }
-            }
+        let areaId = workspace.effectiveAreaId(floorId: floor.id)
+        let label = workspace.areasForFloor(floor.id)
+            .first { $0.areaId == areaId }?.label ?? "area"
+        HStack(spacing: 6) {
+            Circle()
+                .fill(Color.accentColor)
+                .frame(width: 8, height: 8)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.primary)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -585,48 +588,12 @@ struct AdminFloorGraphView: View {
             async let poisTask = client.listPOIs(buildingId: building.id)
             async let passagesTask = client.listPassages(buildingId: building.id)
 
-            let areas = workspace.areasForFloor(floor.id)
-            let usesMultiArea = areas.count > 1
-
-            // nodes/edges 수집
-            var allNodes: [GraphNode] = []
-            var allEdges: [GraphEdge] = []
-            var areaColors: [UUID: Color] = [:]
-            var areaLegend: [(id: UUID, label: String)] = []
-            var serverBoundsAccum: [String: Double]?
-
-            if usesMultiArea {
-                for (idx, area) in areas.enumerated() {
-                    let pathResp = try await client.floorPath(floorId: floor.id, areaId: area.areaId)
-                    let color = Self.colorForAreaIndex(idx)
-                    areaColors[area.areaId] = color
-                    areaLegend.append((id: area.areaId, label: area.label))
-
-                    let parsedNodes: [GraphNode] = pathResp.nodes.compactMap { nd in
-                        parseGraphNode(from: nd, areaId: area.areaId)
-                    }
-                    let parsedEdges: [GraphEdge] = pathResp.edges.compactMap { ed in
-                        parseGraphEdge(from: ed, nodes: parsedNodes + allNodes)
-                    }
-                    allNodes.append(contentsOf: parsedNodes)
-                    allEdges.append(contentsOf: parsedEdges)
-
-                    if let sb = pathResp.bounds, serverBoundsAccum == nil {
-                        serverBoundsAccum = sb
-                    } else if let sb = pathResp.bounds, var accum = serverBoundsAccum {
-                        accum["minX"] = min(accum["minX"] ?? sb["minX"]!, sb["minX"]!)
-                        accum["minY"] = min(accum["minY"] ?? sb["minY"]!, sb["minY"]!)
-                        accum["maxX"] = max(accum["maxX"] ?? sb["maxX"]!, sb["maxX"]!)
-                        accum["maxY"] = max(accum["maxY"] ?? sb["maxY"]!, sb["maxY"]!)
-                        serverBoundsAccum = accum
-                    }
-                }
-            } else {
-                let pathResp = try await client.floorPath(floorId: floor.id)
-                allNodes = pathResp.nodes.compactMap { parseGraphNode(from: $0) }
-                allEdges = pathResp.edges.compactMap { parseGraphEdge(from: $0, nodes: allNodes) }
-                serverBoundsAccum = pathResp.bounds
-            }
+            // 항상 선택된 area 1개만 호출 (multi-area union 제거)
+            let areaId = workspace.effectiveAreaId(floorId: floor.id)
+            let pathResp = try await client.floorPath(floorId: floor.id, areaId: areaId)
+            let allNodes: [GraphNode] = pathResp.nodes.compactMap { parseGraphNode(from: $0) }
+            let allEdges: [GraphEdge] = pathResp.edges.compactMap { parseGraphEdge(from: $0, nodes: allNodes) }
+            let serverBoundsAccum: [String: Double]? = pathResp.bounds
 
             let (allPOIs, allPassages) = try await (poisTask, passagesTask)
 
@@ -689,9 +656,7 @@ struct AdminFloorGraphView: View {
                 edges: allEdges,
                 pois: filteredPOIs,
                 passages: filteredPassages,
-                bounds: bounds,
-                areaColors: areaColors,
-                areaLegend: areaLegend
+                bounds: bounds
             )
 
         } catch {
@@ -699,9 +664,9 @@ struct AdminFloorGraphView: View {
         }
     }
 
-    // MARK: - Area Color
+    // MARK: - Area Color (unused — single-area 모드로 전환. 하위 호환을 위해 보존.)
 
-    /// HSL hue rotation으로 area별 구별되는 색상 생성.
+    /// Deprecated: single-area 모드 전환 후 미사용. 이전 multi-area 색상 생성용.
     static func colorForAreaIndex(_ index: Int) -> Color {
         let hues: [Color] = [.blue, .green, .purple, .orange, .pink, .cyan, .mint, .indigo]
         return hues[index % hues.count]
