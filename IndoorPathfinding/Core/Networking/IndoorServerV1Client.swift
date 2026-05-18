@@ -687,6 +687,22 @@ struct IndoorServerV1Client {
         let decoder = JSONDecoder()
         do {
             return try decoder.decode(type, from: data)
+        } catch let error as DecodingError {
+            // 자세한 진단 메시지 — keyNotFound/typeMismatch/valueNotFound의 path와 reason 노출
+            let detail: String
+            switch error {
+            case .keyNotFound(let key, let ctx):
+                detail = "keyNotFound: '\(key.stringValue)' at [\(ctx.codingPath.map(\.stringValue).joined(separator: "."))] — \(ctx.debugDescription)"
+            case .typeMismatch(let t, let ctx):
+                detail = "typeMismatch: \(t) at [\(ctx.codingPath.map(\.stringValue).joined(separator: "."))] — \(ctx.debugDescription)"
+            case .valueNotFound(let t, let ctx):
+                detail = "valueNotFound: \(t) at [\(ctx.codingPath.map(\.stringValue).joined(separator: "."))] — \(ctx.debugDescription)"
+            case .dataCorrupted(let ctx):
+                detail = "dataCorrupted at [\(ctx.codingPath.map(\.stringValue).joined(separator: "."))] — \(ctx.debugDescription)"
+            @unknown default:
+                detail = "\(error)"
+            }
+            throw V1ClientError.decodingError(detail)
         } catch {
             throw V1ClientError.decodingError(error.localizedDescription)
         }
