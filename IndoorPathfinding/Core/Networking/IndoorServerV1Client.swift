@@ -119,9 +119,10 @@ struct V1MapConnectorStop: Decodable {
     let areaId: UUID
     let areaLabel: String?
     let routeNodeId: UUID?
-    let x: Double
-    let y: Double
-    let z: Double
+    // 다른 floor의 stop은 좌표가 nil일 수 있음 (server가 그 floor build 안 됐을 때)
+    let x: Double?
+    let y: Double?
+    let z: Double?
 }
 
 // Sprint 78 B-1: floor route response DTO
