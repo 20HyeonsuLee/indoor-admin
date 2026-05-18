@@ -72,6 +72,7 @@
 		6C3DC26D745EB963942D9165 /* AdminShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C3F8EDF8B4273F9DA40A3A6 /* AdminShellView.swift */; };
 		6D93D80BC02072DA3FFA40AF /* ARSessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FD60C7782305465F14E104F /* ARSessionManager.swift */; };
 		6E9B7AA413C8E3B03E3B2466 /* ChunkUploadObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18CA750F3E8E9C6C6F21E2F0 /* ChunkUploadObserver.swift */; };
+		69B29557467343E1BA18FB65 /* MapEndpointMigrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C53032BC09E45B49BC1779D /* MapEndpointMigrationTests.swift */; };
 		6F82FCD6F4DC4E2F35C8150C /* RouteRequestPayloadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 502D538514DB45F1E176167C /* RouteRequestPayloadTests.swift */; };
 		731C6768C47D227DC5848C55 /* ChunkRolloverBridgeAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D9F904F4867048FEB6F817C /* ChunkRolloverBridgeAdapters.swift */; };
 		760FE9DFD9D0A1C12069A29D /* IMDFParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9E2CA7559F0595C6BFA1736 /* IMDFParser.swift */; };
@@ -194,7 +195,7 @@
 		0BC215CED76D7137BFD86BEE /* util.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = util.cpp; sourceTree = "<group>"; };
 		0D9F904F4867048FEB6F817C /* ChunkRolloverBridgeAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChunkRolloverBridgeAdapters.swift; sourceTree = "<group>"; };
 		0E287250C8D92B18762A2D86 /* ScanMetadataDatabaseMigrationV3Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanMetadataDatabaseMigrationV3Tests.swift; sourceTree = "<group>"; };
-		0EC7C8CAD0C0A2CAB0B004EB /* .gitignore */ = {isa = PBXFileReference; path = .gitignore; sourceTree = "<group>"; };
+		0EC7C8CAD0C0A2CAB0B004EB /* .gitignore */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitignore; sourceTree = "<group>"; };
 		11866D7A6941D22C17384AB5 /* ScanSessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanSessionView.swift; sourceTree = "<group>"; };
 		13FCFDE9C6F464AEF1D5E338 /* drawable_object.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = drawable_object.cpp; sourceTree = "<group>"; };
 		150CB117BB05BC807937A991 /* RTABMapBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RTABMapBridge.swift; sourceTree = "<group>"; };
@@ -242,6 +243,7 @@
 		4D66CB77D2ECEAF02A9FEC63 /* IndoorPathfindingUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = IndoorPathfindingUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4DDC5801488E42F2E78B3DD9 /* ChunkUploadQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChunkUploadQueue.swift; sourceTree = "<group>"; };
 		4F2BB0B7070F489DC897BC8B /* NativeWrapper.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = NativeWrapper.hpp; sourceTree = "<group>"; };
+		1C53032BC09E45B49BC1779D /* MapEndpointMigrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapEndpointMigrationTests.swift; sourceTree = "<group>"; };
 		502D538514DB45F1E176167C /* RouteRequestPayloadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouteRequestPayloadTests.swift; sourceTree = "<group>"; };
 		52638F3D30555F8CD0C2C818 /* AdminFloorDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminFloorDetailView.swift; sourceTree = "<group>"; };
 		5301CD4CFF4766BC65588F23 /* IndoorPathfindingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndoorPathfindingTests.swift; sourceTree = "<group>"; };
@@ -270,7 +272,7 @@
 		749D60C3B4644C422DB26700 /* DepthScaleCalibrator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DepthScaleCalibrator.swift; sourceTree = "<group>"; };
 		7504AF607A5164F80BBBA7CB /* InterfloorMarkRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfloorMarkRepository.swift; sourceTree = "<group>"; };
 		754363A885374766692F2223 /* PoseFileWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PoseFileWriter.swift; sourceTree = "<group>"; };
-		79CCA6F4DF9A2CF2B1CEDD29 /* IndoorPathfinding.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = IndoorPathfinding.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		79CCA6F4DF9A2CF2B1CEDD29 /* IndoorPathfinding.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = IndoorPathfinding.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7A0FC01CF46590748018086F /* ScanMetadataDatabaseMigrationV7Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanMetadataDatabaseMigrationV7Tests.swift; sourceTree = "<group>"; };
 		7C1F7B5B4FECECC28CEDCD9E /* AdminWorkspaceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminWorkspaceStore.swift; sourceTree = "<group>"; };
 		7C3F8EDF8B4273F9DA40A3A6 /* AdminShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminShellView.swift; sourceTree = "<group>"; };
@@ -469,7 +471,8 @@
 				06C26E2C8D92D468FA5D46C9 /* MarkRepositoryV7Tests.swift */,
 				D8728856E7C0AD7A11F683A1 /* PoiPhotoRepositoryTests.swift */,
 				1B257036D82EAC143B92E6F0 /* PoseFileWriterTests.swift */,
-				502D538514DB45F1E176167C /* RouteRequestPayloadTests.swift */,
+				1C53032BC09E45B49BC1779D /* MapEndpointMigrationTests.swift */,
+			502D538514DB45F1E176167C /* RouteRequestPayloadTests.swift */,
 				2A3503C58E703FA20E0F5C07 /* ScanFileStoreChunkMetadataLinkTests.swift */,
 				8E9185366155DAE6D02D0061 /* ScanMetadataDatabaseMigrationV2Tests.swift */,
 				0E287250C8D92B18762A2D86 /* ScanMetadataDatabaseMigrationV3Tests.swift */,
@@ -921,7 +924,7 @@
 			mainGroup = 3C37AE670A82BD6489E1D1EA;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
+				A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB" */,
 				035FE36193140358C375BC01 /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -1106,7 +1109,8 @@
 				EF8E98CA380D1E02F3896DD3 /* MarkingStateTests.swift in Sources */,
 				FE6C4CB65C43F8A1314CBBCC /* PoiPhotoRepositoryTests.swift in Sources */,
 				A31C6C1611BCEE81378CC477 /* PoseFileWriterTests.swift in Sources */,
-				6F82FCD6F4DC4E2F35C8150C /* RouteRequestPayloadTests.swift in Sources */,
+				69B29557467343E1BA18FB65 /* MapEndpointMigrationTests.swift in Sources */,
+			6F82FCD6F4DC4E2F35C8150C /* RouteRequestPayloadTests.swift in Sources */,
 				4D723AEA24F91449D7BD2DBD /* ScanFileStoreChunkMetadataLinkTests.swift in Sources */,
 				F64D413AEE66895A8F821651 /* ScanMetadataDatabaseMigrationV2Tests.swift in Sources */,
 				92C604E468A9177145D95F60 /* ScanMetadataDatabaseMigrationV3Tests.swift in Sources */,
@@ -1213,6 +1217,7 @@
 				CLANG_CXX_LIBRARY = "libc++";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				DEVELOPMENT_ASSET_PATHS = "\"IndoorPathfinding/Preview Content\"";
+				DEVELOPMENT_TEAM = RDTWAVXLC3;
 				"EXCLUDED_SOURCE_FILE_NAMES[sdk=iphonesimulator*]" = (
 					NativeWrapper.cpp,
 					RTABMapApp.cpp,
@@ -1357,9 +1362,7 @@
 					"-llibprotobuf",
 					"-lsqlite3",
 				);
-				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (
-					"$(inherited)",
-				);
+				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = "$(inherited)";
 				PRODUCT_BUNDLE_IDENTIFIER = ac.koreatech.indoorpathfinding;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "Vendor/RTABMap/Bridge/IndoorPathfinding-Bridging-Header.h";
@@ -1500,6 +1503,7 @@
 				CLANG_CXX_LIBRARY = "libc++";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				DEVELOPMENT_ASSET_PATHS = "\"IndoorPathfinding/Preview Content\"";
+				DEVELOPMENT_TEAM = RDTWAVXLC3;
 				"EXCLUDED_SOURCE_FILE_NAMES[sdk=iphonesimulator*]" = (
 					NativeWrapper.cpp,
 					RTABMapApp.cpp,
@@ -1644,9 +1648,7 @@
 					"-llibprotobuf",
 					"-lsqlite3",
 				);
-				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (
-					"$(inherited)",
-				);
+				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = "$(inherited)";
 				PRODUCT_BUNDLE_IDENTIFIER = ac.koreatech.indoorpathfinding;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "Vendor/RTABMap/Bridge/IndoorPathfinding-Bridging-Header.h";
@@ -1731,7 +1733,7 @@
 				minimumVersion = 0.9.19;
 			};
 		};
-		A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
+		A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/groue/GRDB.swift";
 			requirement = {
@@ -1744,7 +1746,7 @@
 /* Begin XCSwiftPackageProductDependency section */
 		0F5BFE6B2E1C6CBE2B7D3B30 /* GRDB */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
+			package = A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB" */;
 			productName = GRDB;
 		};
 		2DC72AD233964E4CCB906D1D /* ZIPFoundation */ = {
@@ -1754,7 +1756,7 @@
 		};
 		33128A89E61BFC3F9229DB6F /* GRDB */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
+			package = A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB" */;
 			productName = GRDB;
 		};
 		F2883010291F8E9E28DFB02D /* ZIPFoundation */ = {

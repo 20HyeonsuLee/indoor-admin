@@ -2,6 +2,12 @@ import SwiftUI
 
 // MARK: - Graph Data Models
 
+/// node.connector 메타 (passage 정보를 node에서 derive)
+struct NodeConnector {
+    let type: String
+    let key: String
+}
+
 struct GraphNode: Identifiable {
     let id: UUID
     let x: Double
@@ -9,18 +15,31 @@ struct GraphNode: Identifiable {
     let label: String?
     /// area별 색상 분리에 사용. single-area 모드에서는 nil.
     let areaId: UUID?
+    /// node.type 필드 (poi / corridor / connector 등)
+    let category: String?
+    /// connector 메타. type == "connector" 이거나 connector 객체가 있는 노드.
+    let connector: NodeConnector?
 
-    init(id: UUID, x: Double, y: Double, label: String?, areaId: UUID? = nil) {
+    init(id: UUID, x: Double, y: Double, label: String?, areaId: UUID? = nil, category: String? = nil, connector: NodeConnector? = nil) {
         self.id = id
         self.x = x
         self.y = y
         self.label = label
         self.areaId = areaId
+        self.category = category
+        self.connector = connector
     }
 }
 
 struct GraphEdge: Identifiable {
     let id: UUID
+    /// 서버 edge id (route 결과 매칭용)
+    let edgeServerId: UUID?
+    /// route 계산용 fromNode/toNode id
+    let fromNodeId: UUID?
+    let toNodeId: UUID?
+    /// 미터 단위 길이 (route 비용)
+    let lengthM: Double?
     let fromX: Double
     let fromY: Double
     let toX: Double
@@ -68,6 +87,8 @@ struct FloorGraphPayload {
     var areaColors: [UUID: Color]
     /// legend용: (areaId, label) 순서 배열.
     var areaLegend: [(id: UUID, label: String)]
+    /// GeoJSON polygon 파싱 결과. 각 요소 = 하나의 Polygon feature 외곽 ring. world meter 좌표.
+    var polygons: [[CGPoint]]
 
     init(
         nodes: [GraphNode],
@@ -76,7 +97,8 @@ struct FloorGraphPayload {
         passages: [GraphPassage],
         bounds: GraphBounds,
         areaColors: [UUID: Color] = [:],
-        areaLegend: [(id: UUID, label: String)] = []
+        areaLegend: [(id: UUID, label: String)] = [],
+        polygons: [[CGPoint]] = []
     ) {
         self.nodes = nodes
         self.edges = edges
@@ -85,6 +107,7 @@ struct FloorGraphPayload {
         self.bounds = bounds
         self.areaColors = areaColors
         self.areaLegend = areaLegend
+        self.polygons = polygons
     }
 }
 
@@ -448,6 +471,23 @@ struct AdminFloorGraphView: View {
     @ViewBuilder
     private func graphContent(_ p: FloorGraphPayload, size: CGSize, bounds: GraphBounds, viewScale: Double, padding: Double) -> some View {
         ZStack {
+            // Polygon layer (BG — 노드/엣지 아래)
+            Canvas { ctx, _ in
+                for ring in p.polygons {
+                    guard ring.count >= 3 else { continue }
+                    var path = Path()
+                    let first = toDisplay(x: Double(ring[0].x), y: Double(ring[0].y), bounds: bounds, viewScale: viewScale, padding: padding)
+                    path.move(to: first)
+                    for pt in ring.dropFirst() {
+                        let dp = toDisplay(x: Double(pt.x), y: Double(pt.y), bounds: bounds, viewScale: viewScale, padding: padding)
+                        path.addLine(to: dp)
+                    }
+                    path.closeSubpath()
+                    ctx.fill(path, with: .color(.blue.opacity(0.08)))
+                    ctx.stroke(path, with: .color(.blue.opacity(0.35)), lineWidth: 1.5)
+                }
+            }
+
             Canvas { ctx, _ in
                 // Sprint 78 B-4: route highlight
                 let hasRoute = !routeEdgeIds.isEmpty
@@ -585,64 +625,41 @@ struct AdminFloorGraphView: View {
         defer { isLoading = false }
 
         do {
-            async let poisTask = client.listPOIs(buildingId: building.id)
-            async let passagesTask = client.listPassages(buildingId: building.id)
-
-            // 항상 선택된 area 1개만 호출 (multi-area union 제거)
+            // 단일 호출로 nodes/edges/bounds/polygon 일괄 수신
             let areaId = workspace.effectiveAreaId(floorId: floor.id)
-            let pathResp = try await client.floorPath(floorId: floor.id, areaId: areaId)
-            let allNodes: [GraphNode] = pathResp.nodes.compactMap { parseGraphNode(from: $0) }
-            let allEdges: [GraphEdge] = pathResp.edges.compactMap { parseGraphEdge(from: $0, nodes: allNodes) }
-            let serverBoundsAccum: [String: Double]? = pathResp.bounds
+            let mapResp = try await client.floorMap(floorId: floor.id, areaId: areaId)
 
-            let (allPOIs, allPassages) = try await (poisTask, passagesTask)
+            let allNodes: [GraphNode] = mapResp.nodes.compactMap { parseGraphNode(from: $0) }
+            let allEdges: [GraphEdge] = mapResp.edges.compactMap { parseGraphEdge(from: $0, nodes: allNodes) }
 
-            // POIs filtered by floor
-            let filteredPOIs: [GraphPOI] = allPOIs
-                .filter { $0.floorId == floor.id }
-                .compactMap { p in
-                    guard let dp = p.displayPoint,
-                          let x = dp["x"], let y = dp["y"] else { return nil }
-                    return GraphPOI(
-                        id: p.poiId,
-                        routeNodeId: p.routeNodeId,
-                        name: p.name ?? p.label ?? "POI",
-                        x: x, y: y,
-                        category: p.category
-                    )
-                }
+            // POI derive: node.category == "poi"
+            let filteredPOIs: [GraphPOI] = allNodes.compactMap { node in
+                guard node.category?.lowercased() == "poi" else { return nil }
+                return GraphPOI(
+                    id: node.id,
+                    routeNodeId: node.id,  // /map에서는 nodeId == routeNodeId
+                    name: node.label ?? "POI",
+                    x: node.x, y: node.y,
+                    category: "poi"
+                )
+            }
 
-            // Passages filtered by floor involvement (M5: strongly-typed V1PassageSegment 사용)
-            let filteredPassages: [GraphPassage] = allPassages.compactMap { p in
-                let floorIdStr = floor.id.uuidString.uppercased()
-                func levelMatchesFloor(_ levelId: String?) -> Bool {
-                    guard let raw = levelId?.uppercased() else { return false }
-                    let stripped = raw.hasPrefix("FLOOR:") ? String(raw.dropFirst("FLOOR:".count)) : raw
-                    return stripped == floorIdStr
-                }
-                let matchingSegment: V1PassageSegment? = p.segments.first { seg in
-                    seg.floorId?.uppercased() == floorIdStr
-                    || levelMatchesFloor(seg.levelId)
-                }
-                guard let seg = matchingSegment,
-                      let sx = seg.x,
-                      let sy = seg.y else { return nil }
-
-                let routeNodeId: UUID? = seg.routeNodeId.flatMap { UUID(uuidString: $0) }
-
+            // Passage derive: node.connector != nil
+            let filteredPassages: [GraphPassage] = allNodes.compactMap { node in
+                guard let conn = node.connector else { return nil }
                 return GraphPassage(
-                    id: p.passageId,
-                    routeNodeId: routeNodeId,
-                    connectorType: p.connectorType,
-                    connectorKey: p.connectorKey,
-                    name: p.name,
-                    x: sx, y: sy
+                    id: node.id,
+                    routeNodeId: node.id,
+                    connectorType: conn.type,
+                    connectorKey: conn.key,
+                    name: node.label,
+                    x: node.x, y: node.y
                 )
             }
 
             // Bounds
             var bounds = allNodes.isEmpty ? GraphBounds.empty : boundsFromNodes(allNodes, pois: filteredPOIs)
-            if let sb = serverBoundsAccum {
+            if let sb = mapResp.bounds {
                 bounds = GraphBounds(
                     minX: sb["minX"] ?? bounds.minX,
                     minY: sb["minY"] ?? bounds.minY,
@@ -651,17 +668,49 @@ struct AdminFloorGraphView: View {
                 )
             }
 
+            // Polygon GeoJSON 파싱
+            let polygons = parsePolygonFeatures(mapResp.polygon)
+
             payload = FloorGraphPayload(
                 nodes: allNodes,
                 edges: allEdges,
                 pois: filteredPOIs,
                 passages: filteredPassages,
-                bounds: bounds
+                bounds: bounds,
+                polygons: polygons
             )
 
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    // MARK: - Polygon Parsing
+
+    /// GeoJSON FeatureCollection dict → 각 Polygon feature의 외곽 ring을 CGPoint 배열로 반환.
+    /// world meter 좌표. 빈 collection / nil 입력은 [] 반환.
+    func parsePolygonFeatures(_ dict: [String: V1AnyValue]?) -> [[CGPoint]] {
+        AdminFloorGraphView.parsePolygonFeaturesStatic(dict)
+    }
+
+    /// 테스트 가능 static 구현. 인스턴스 없이 직접 호출 가능.
+    static func parsePolygonFeaturesStatic(_ dict: [String: V1AnyValue]?) -> [[CGPoint]] {
+        guard let features = dict?["features"]?.asArray else { return [] }
+        var result: [[CGPoint]] = []
+        for feature in features {
+            guard let feat = feature.asDict,
+                  let geom = feat["geometry"]?.asDict,
+                  geom["type"]?.asString == "Polygon",
+                  let rings = geom["coordinates"]?.asArray,
+                  let outerRing = rings.first?.asArray else { continue }
+            let points: [CGPoint] = outerRing.compactMap { coord in
+                guard let arr = coord.asArray, arr.count >= 2,
+                      let x = arr[0].asDouble, let y = arr[1].asDouble else { return nil }
+                return CGPoint(x: x, y: y)
+            }
+            if points.count >= 3 { result.append(points) }
+        }
+        return result
     }
 
     // MARK: - Area Color (unused — single-area 모드로 전환. 하위 호환을 위해 보존.)
@@ -673,36 +722,46 @@ struct AdminFloorGraphView: View {
     }
 
     private func parseGraphNode(from dict: [String: V1AnyValue], areaId: UUID? = nil) -> GraphNode? {
-        // GeoJSON Feature format: geometry.coordinates[0,1]
-        // M1: convertFromSnakeCase 제거 후 서버가 보내는 원본 키 그대로 사용
-        //     서버 GeoJSON properties 키: "node_id", "node_type" (snake_case)
+        // /map flat format: { id, type, x, y, z, label, connector: {type, key} | null }
+        if let x = dict["x"]?.asDouble, let y = dict["y"]?.asDouble {
+            let idStr = dict["id"]?.asString ?? dict["node_id"]?.asString ?? UUID().uuidString
+            let category = dict["type"]?.asString
+            let connector: NodeConnector? = {
+                guard let connDict = dict["connector"]?.asDict,
+                      let t = connDict["type"]?.asString,
+                      let k = connDict["key"]?.asString else { return nil }
+                return NodeConnector(type: t, key: k)
+            }()
+            return GraphNode(
+                id: UUID(uuidString: idStr) ?? UUID(),
+                x: x, y: y,
+                label: dict["label"]?.asString,
+                areaId: areaId,
+                category: category,
+                connector: connector
+            )
+        }
+
+        // GeoJSON Feature format (하위 호환: /path 응답)
         if let geom = dict["geometry"]?.asDict,
            let coords = geom["coordinates"]?.asArray,
            coords.count >= 2,
            let x = coords[0].asDouble,
            let y = coords[1].asDouble {
             let props = dict["properties"]?.asDict
-            let idStr = props?["node_id"]?.asString       // 서버 원본 키
-                ?? props?["nodeId"]?.asString             // camelCase 호환 (미래 대비)
+            let idStr = props?["node_id"]?.asString
+                ?? props?["nodeId"]?.asString
                 ?? dict["id"]?.asString
                 ?? UUID().uuidString
             let label = props?["label"]?.asString ?? dict["label"]?.asString
+            let category = props?["node_type"]?.asString ?? props?["type"]?.asString
             return GraphNode(
                 id: UUID(uuidString: idStr) ?? UUID(),
                 x: x, y: y,
                 label: label,
-                areaId: areaId
-            )
-        }
-
-        // Flat format (하위 호환)
-        if let x = dict["x"]?.asDouble, let y = dict["y"]?.asDouble {
-            let idStr = dict["node_id"]?.asString ?? dict["id"]?.asString ?? UUID().uuidString
-            return GraphNode(
-                id: UUID(uuidString: idStr) ?? UUID(),
-                x: x, y: y,
-                label: dict["label"]?.asString,
-                areaId: areaId
+                areaId: areaId,
+                category: category,
+                connector: nil
             )
         }
 
@@ -710,29 +769,36 @@ struct AdminFloorGraphView: View {
     }
 
     private func parseGraphEdge(from dict: [String: V1AnyValue], nodes: [GraphNode]) -> GraphEdge? {
-        // GeoJSON Feature format: from_node_id / to_node_id はproperties 안에 있음
-        // M1: convertFromSnakeCase 제거 후 서버 원본 snake_case 키 우선
+        // /map flat format: { id, fromNodeId, toNodeId, lengthM, type }
+        // GeoJSON format (하위 호환): properties.from_node_id / to_node_id
         let props = dict["properties"]?.asDict
-        let fromIdStr = props?["from_node_id"]?.asString  // 서버 원본 키
-            ?? props?["fromNodeId"]?.asString             // camelCase 호환
+        let fromIdStr = dict["fromNodeId"]?.asString
+            ?? props?["from_node_id"]?.asString
+            ?? props?["fromNodeId"]?.asString
             ?? dict["from_node_id"]?.asString
-            ?? dict["fromNodeId"]?.asString
             ?? dict["from"]?.asString
             ?? ""
-        let toIdStr = props?["to_node_id"]?.asString      // 서버 원본 키
-            ?? props?["toNodeId"]?.asString               // camelCase 호환
+        let toIdStr = dict["toNodeId"]?.asString
+            ?? props?["to_node_id"]?.asString
+            ?? props?["toNodeId"]?.asString
             ?? dict["to_node_id"]?.asString
-            ?? dict["toNodeId"]?.asString
             ?? dict["to"]?.asString
             ?? ""
 
+        let edgeIdStr = dict["id"]?.asString ?? props?["edge_id"]?.asString
+        let edgeUUID = edgeIdStr.flatMap { UUID(uuidString: $0) }
         let fromUUID = UUID(uuidString: fromIdStr)
         let toUUID = UUID(uuidString: toIdStr)
+
         if let fromUUID, let toUUID,
            let fromNode = nodes.first(where: { $0.id == fromUUID }),
            let toNode = nodes.first(where: { $0.id == toUUID }) {
             return GraphEdge(
-                id: UUID(),
+                id: edgeUUID ?? UUID(),
+                edgeServerId: edgeUUID,
+                fromNodeId: fromUUID,
+                toNodeId: toUUID,
+                lengthM: dict["lengthM"]?.asDouble ?? props?["length_m"]?.asDouble,
                 fromX: fromNode.x, fromY: fromNode.y,
                 toX: toNode.x, toY: toNode.y
             )
@@ -748,7 +814,11 @@ struct AdminFloorGraphView: View {
            let fx = firstCoord[0].asDouble, let fy = firstCoord[1].asDouble,
            let tx = lastCoord[0].asDouble, let ty = lastCoord[1].asDouble {
             return GraphEdge(
-                id: UUID(),
+                id: edgeUUID ?? UUID(),
+                edgeServerId: edgeUUID,
+                fromNodeId: fromUUID,
+                toNodeId: toUUID,
+                lengthM: nil,
                 fromX: fx, fromY: fy,
                 toX: tx, toY: ty
             )
