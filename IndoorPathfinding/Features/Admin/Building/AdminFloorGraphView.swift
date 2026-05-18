@@ -128,9 +128,9 @@ struct AdminFloorGraphView: View {
     // Sprint 78 B-2: 길찾기 상태
     @State private var startNodeId: UUID?           // 출발지 (corridor 탭 선택)
     @State private var destinationSearch: String = ""
-    @State private var destinationNodeId: UUID?     // 목적지 (POI/passage UUID)
+    @State private var destinationNodeId: UUID?     // 목적지 POI routeNodeId
     @State private var destinationLabel: String?    // 목적지 표시 레이블
-    @State private var routeResult: FloorRouteResponse?
+    @State private var routeResult: PathfindingResponse?
     @State private var routeNodeIds: Set<String> = []
     @State private var routeEdgeIds: Set<String> = []
     @State private var isRouteLoading = false
@@ -224,7 +224,7 @@ struct AdminFloorGraphView: View {
         if destinations.isEmpty { return 0 }
         // 결과 라인은 result/error 있을 때만. 기본 1줄 + 가변 1줄
         let hasSecondary = routeResult != nil || routeError != nil || isRouteLoading
-        return hasSecondary ? 70 : 50
+        return hasSecondary ? 80 : 50
     }
 
     @ViewBuilder
@@ -267,10 +267,19 @@ struct AdminFloorGraphView: View {
                 if let r = routeResult {
                     HStack(spacing: 6) {
                         Image(systemName: "ruler").font(.caption2).foregroundStyle(.secondary)
-                        Text(String(format: "%.1fm · %d노드", r.totalLengthM, r.nodeCount))
+                        Text(String(format: "%.1fm · 약 %d초 · %d스텝",
+                                    r.totalDistance,
+                                    r.estimatedTimeSeconds,
+                                    r.steps.count))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Spacer()
+                        if let first = r.steps.first, let inst = first.instruction {
+                            Text(inst)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
                     }
                 } else if let err = routeError {
                     HStack(spacing: 6) {
@@ -338,39 +347,67 @@ struct AdminFloorGraphView: View {
     }
 
     private func routeDestinations(_ p: FloorGraphPayload) -> [RouteDestination] {
-        // 라우팅 endpoint는 graph node_id(=routeNodeId)를 기대.
-        // poi_id/passage_id를 보내면 NODE_NOT_FOUND 404가 난다.
-        var list: [RouteDestination] = []
-        for poi in p.pois {
-            guard let rid = poi.routeNodeId else { continue }
-            list.append(RouteDestination(id: rid, label: poi.name))
+        // pathfinding endpoint는 destinationName(POI 이름)을 받는다.
+        // Passage는 지원하지 않으므로 POI만 후보로 노출.
+        p.pois.compactMap { poi -> RouteDestination? in
+            guard poi.routeNodeId != nil else { return nil }
+            return RouteDestination(id: poi.id, label: poi.name)
         }
-        for passage in p.passages {
-            guard let rid = passage.routeNodeId else { continue }
-            let lbl = passage.name ?? "\(passage.connectorType) \(passage.connectorKey)"
-            list.append(RouteDestination(id: rid, label: lbl))
-        }
-        return list
     }
 
     private func findRoute(_ p: FloorGraphPayload) async {
-        guard let from = startNodeId, let to = destinationNodeId,
+        guard let from = startNodeId,
+              let destPoiId = destinationNodeId,
               let client = workspace.v1Client else { return }
+
+        guard let startNode = p.nodes.first(where: { $0.id == from }) else {
+            routeError = "출발 노드를 찾을 수 없음"
+            return
+        }
+        guard let destPoi = p.pois.first(where: { $0.id == destPoiId }) else {
+            routeError = "목적지 POI를 찾을 수 없음"
+            return
+        }
+
         isRouteLoading = true
         routeError = nil
         defer { isRouteLoading = false }
+
+        let areaId = workspace.effectiveAreaId(floorId: floor.id)
+        let req = PathfindingRequest(
+            startScanId: nil,
+            startAreaId: areaId,
+            startFloorLevel: floor.level,
+            startX: startNode.x,
+            startY: startNode.y,
+            startZ: 0,
+            destinationName: destPoi.name,
+            preference: nil,
+            verticalPreference: nil
+        )
+
         do {
-            let result = try await client.fetchFloorRoute(
-                floorId: floor.id, fromNodeId: from, toNodeId: to
-            )
+            let result = try await client.pathfinding(buildingId: building.id, request: req)
             routeResult = result
-            // 서버는 lowercase UUID, Swift UUID.uuidString 은 uppercase.
-            // 비교 안 어긋나게 양쪽 uppercase 로 통일.
-            routeNodeIds = Set(result.nodes.map { $0.uppercased() })
-            routeEdgeIds = Set(result.edges.map { $0.uppercased() })
+            routeNodeIds = Set(result.steps.compactMap { $0.nodeId?.uuidString.uppercased() })
+            routeEdgeIds = inferEdgeIdsBetween(steps: result.steps, allEdges: p.edges)
         } catch {
             routeError = error.localizedDescription
         }
+    }
+
+    private func inferEdgeIdsBetween(steps: [PathStepResponse], allEdges: [GraphEdge]) -> Set<String> {
+        var ids: Set<String> = []
+        for i in 0..<steps.count - 1 {
+            guard let from = steps[i].nodeId, let to = steps[i + 1].nodeId else { continue }
+            if let edge = allEdges.first(where: {
+                ($0.fromNodeId == from && $0.toNodeId == to) ||
+                ($0.fromNodeId == to && $0.toNodeId == from)
+            }), let serverId = edge.edgeServerId {
+                ids.insert(serverId.uuidString.uppercased())
+            }
+        }
+        return ids
     }
 
     private func resetRoute() {

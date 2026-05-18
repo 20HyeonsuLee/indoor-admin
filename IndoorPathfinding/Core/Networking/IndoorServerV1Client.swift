@@ -97,6 +97,51 @@ struct FloorRouteResponse: Decodable {
     let nodeCount: Int
 }
 
+// MARK: - Pathfinding DTOs (POST /buildings/{id}/pathfinding)
+
+struct PathfindingRequest: Encodable {
+    let startScanId: UUID?
+    let startAreaId: UUID?
+    let startFloorLevel: Int?
+    let startX: Double?
+    let startY: Double?
+    let startZ: Double?
+    let destinationName: String
+    let preference: String?
+    let verticalPreference: String?
+}
+
+struct RoutePosition: Decodable {
+    let x: Double
+    let y: Double
+    let z: Double
+    let floorLevel: Int
+}
+
+struct PathStepResponse: Decodable {
+    let stepNumber: Int
+    let floorLevel: Int
+    let position: RoutePosition
+    let instruction: String?
+    let nodeId: UUID?
+}
+
+struct FloorTransitionResponse: Decodable {
+    let fromFloorLevel: Int
+    let toFloorLevel: Int
+    let connectorType: String
+    let connectorKey: String
+}
+
+struct PathfindingResponse: Decodable {
+    let buildingId: UUID
+    let totalDistance: Double
+    let estimatedTimeSeconds: Int
+    let steps: [PathStepResponse]
+    let floorTransitions: [FloorTransitionResponse]
+    let routeMetadata: [String: V1AnyValue]?
+}
+
 struct V1POI: Decodable, Identifiable {
     let poiId: UUID
     let buildingId: UUID?
@@ -460,7 +505,15 @@ struct IndoorServerV1Client {
         return try await get(url: c.url!)
     }
 
-    // Sprint 78 B-1: floor route
+    // POST /api/v1/buildings/{id}/pathfinding
+    func pathfinding(buildingId: UUID, request: PathfindingRequest) async throws -> PathfindingResponse {
+        try await post(
+            url: v1.appendingPathComponent("buildings/\(buildingId.uuidString)/pathfinding"),
+            body: request
+        )
+    }
+
+    // Sprint 78 B-1: floor route (deprecated — use pathfinding(buildingId:request:) instead)
     func fetchFloorRoute(floorId: UUID, fromNodeId: UUID, toNodeId: UUID) async throws -> FloorRouteResponse {
         var components = URLComponents(url: v1.appendingPathComponent("floors/\(floorId.uuidString)/route"), resolvingAgainstBaseURL: false)
         components?.queryItems = [

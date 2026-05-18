@@ -30,6 +30,7 @@
 		29455F6740CDECF9119966E8 /* KeyframeRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABA56F14B689702A95EAC9F0 /* KeyframeRepository.swift */; };
 		29F67AFBC46FF14E9DDBFE2C /* StreamingScanClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 964712B1D4FE75C41578CE69 /* StreamingScanClient.swift */; };
 		2A8066182F2F35192E6ED143 /* cube.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 2109C83E2E54514C9F1493B0 /* cube.cpp */; };
+		2C655B8625D119233A8F9242 /* MapEndpointMigrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC3685C7844F35A20AD78CE6 /* MapEndpointMigrationTests.swift */; };
 		2CB909EF0F3EA29F88501B5D /* camera.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 045CA575A2840E7E9ED85C16 /* camera.cpp */; };
 		2EFA51904FDBF00317DCEEE7 /* BranchEdgeRepositoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D382D3A221E8B56A87CEF95 /* BranchEdgeRepositoryTests.swift */; };
 		3059089FAEAB088002C91618 /* KeyframeSample.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C862FCB2E0FB898EDB69C17 /* KeyframeSample.swift */; };
@@ -72,7 +73,6 @@
 		6C3DC26D745EB963942D9165 /* AdminShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C3F8EDF8B4273F9DA40A3A6 /* AdminShellView.swift */; };
 		6D93D80BC02072DA3FFA40AF /* ARSessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FD60C7782305465F14E104F /* ARSessionManager.swift */; };
 		6E9B7AA413C8E3B03E3B2466 /* ChunkUploadObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18CA750F3E8E9C6C6F21E2F0 /* ChunkUploadObserver.swift */; };
-		69B29557467343E1BA18FB65 /* MapEndpointMigrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C53032BC09E45B49BC1779D /* MapEndpointMigrationTests.swift */; };
 		6F82FCD6F4DC4E2F35C8150C /* RouteRequestPayloadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 502D538514DB45F1E176167C /* RouteRequestPayloadTests.swift */; };
 		731C6768C47D227DC5848C55 /* ChunkRolloverBridgeAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D9F904F4867048FEB6F817C /* ChunkRolloverBridgeAdapters.swift */; };
 		760FE9DFD9D0A1C12069A29D /* IMDFParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9E2CA7559F0595C6BFA1736 /* IMDFParser.swift */; };
@@ -103,6 +103,7 @@
 		A31C6C1611BCEE81378CC477 /* PoseFileWriterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B257036D82EAC143B92E6F0 /* PoseFileWriterTests.swift */; };
 		A75B8C6813CBBBA0D453C086 /* DepthScaleCalibrator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 749D60C3B4644C422DB26700 /* DepthScaleCalibrator.swift */; };
 		A7D986452E8DA8E65370D6F3 /* PoiMark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31F6308DEE43AFF99A343A8C /* PoiMark.swift */; };
+		AAFC4DCBFC17C97F045F09F7 /* AreaScanGraphTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 779D30FD56C063D40CB18463 /* AreaScanGraphTests.swift */; };
 		AB3BC7009FDE86A7B1B90BEC /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 0F5BFE6B2E1C6CBE2B7D3B30 /* GRDB */; };
 		AB5310BC17986CDC46BF9807 /* WidthSelectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2AFF55233E20BA3A71690244 /* WidthSelectorView.swift */; };
 		ACA9489E33AB8ABE73BCDE27 /* FloorProjectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37C8B0881D31BEE3E2124FFC /* FloorProjectionTests.swift */; };
@@ -114,6 +115,7 @@
 		B60F1D7A6B6B1BAB54DC45A0 /* MarkRepositoryDeltaTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84ED21ACF82F6DCF362B82CD /* MarkRepositoryDeltaTests.swift */; };
 		B6875A659BB9FBAF93E8FA28 /* background_renderer.cc in Sources */ = {isa = PBXBuildFile; fileRef = 804A85C66670E685684B1EFD /* background_renderer.cc */; };
 		B81D3631BF1DFA73BCE8E0AC /* MarkARSceneOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3FED76040ED3FDFB1C7006A /* MarkARSceneOverlay.swift */; };
+		B841FC2AC800D25408970AE2 /* AdminPathfindingMigrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA15A490EB6862A645EA5C92 /* AdminPathfindingMigrationTests.swift */; };
 		B9745881A35EA63F7C595C12 /* VideoRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61145D4E5134EE2F1D6DAD15 /* VideoRecorder.swift */; };
 		B97FB116BA2D98DAD1D948CB /* IndoorPathfindingUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D54618C900DF9E044E87DD56 /* IndoorPathfindingUITests.swift */; };
 		BA454033B5D616D04BCEE2CE /* ZipScanArchiverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7C50CEA252D65825136600F /* ZipScanArchiverTests.swift */; };
@@ -160,6 +162,7 @@
 		F791D214C4EFBB085B860175 /* AdminFloorDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52638F3D30555F8CD0C2C818 /* AdminFloorDetailView.swift */; };
 		F85F68D6527C633B6466DEC7 /* KeyframeMeta.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56E8FE559CC3B659508B07D2 /* KeyframeMeta.swift */; };
 		FB8C279311ABA778196225F9 /* RtabmapDBReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = F51CAD1F87C6500287E9E900 /* RtabmapDBReader.swift */; };
+		FB90D1948D6ABDDEC63464C1 /* LocalFloorRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F172A8FED2DC7237EF648EEB /* LocalFloorRouter.swift */; };
 		FBDE85F07B8BB7F4C6AF1213 /* ScanMetadataDatabaseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DE5BFFA53A22D61B69EACA3 /* ScanMetadataDatabaseTests.swift */; };
 		FE6C4CB65C43F8A1314CBBCC /* PoiPhotoRepositoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8728856E7C0AD7A11F683A1 /* PoiPhotoRepositoryTests.swift */; };
 		FF0F6F505959DFED839C20AC /* ManifestWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D275BBBFC58E5F7013401D0 /* ManifestWriter.swift */; };
@@ -195,7 +198,7 @@
 		0BC215CED76D7137BFD86BEE /* util.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = util.cpp; sourceTree = "<group>"; };
 		0D9F904F4867048FEB6F817C /* ChunkRolloverBridgeAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChunkRolloverBridgeAdapters.swift; sourceTree = "<group>"; };
 		0E287250C8D92B18762A2D86 /* ScanMetadataDatabaseMigrationV3Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanMetadataDatabaseMigrationV3Tests.swift; sourceTree = "<group>"; };
-		0EC7C8CAD0C0A2CAB0B004EB /* .gitignore */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitignore; sourceTree = "<group>"; };
+		0EC7C8CAD0C0A2CAB0B004EB /* .gitignore */ = {isa = PBXFileReference; path = .gitignore; sourceTree = "<group>"; };
 		11866D7A6941D22C17384AB5 /* ScanSessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanSessionView.swift; sourceTree = "<group>"; };
 		13FCFDE9C6F464AEF1D5E338 /* drawable_object.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = drawable_object.cpp; sourceTree = "<group>"; };
 		150CB117BB05BC807937A991 /* RTABMapBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RTABMapBridge.swift; sourceTree = "<group>"; };
@@ -243,7 +246,6 @@
 		4D66CB77D2ECEAF02A9FEC63 /* IndoorPathfindingUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = IndoorPathfindingUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4DDC5801488E42F2E78B3DD9 /* ChunkUploadQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChunkUploadQueue.swift; sourceTree = "<group>"; };
 		4F2BB0B7070F489DC897BC8B /* NativeWrapper.hpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.h; path = NativeWrapper.hpp; sourceTree = "<group>"; };
-		1C53032BC09E45B49BC1779D /* MapEndpointMigrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapEndpointMigrationTests.swift; sourceTree = "<group>"; };
 		502D538514DB45F1E176167C /* RouteRequestPayloadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouteRequestPayloadTests.swift; sourceTree = "<group>"; };
 		52638F3D30555F8CD0C2C818 /* AdminFloorDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminFloorDetailView.swift; sourceTree = "<group>"; };
 		5301CD4CFF4766BC65588F23 /* IndoorPathfindingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndoorPathfindingTests.swift; sourceTree = "<group>"; };
@@ -272,7 +274,8 @@
 		749D60C3B4644C422DB26700 /* DepthScaleCalibrator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DepthScaleCalibrator.swift; sourceTree = "<group>"; };
 		7504AF607A5164F80BBBA7CB /* InterfloorMarkRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InterfloorMarkRepository.swift; sourceTree = "<group>"; };
 		754363A885374766692F2223 /* PoseFileWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PoseFileWriter.swift; sourceTree = "<group>"; };
-		79CCA6F4DF9A2CF2B1CEDD29 /* IndoorPathfinding.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = IndoorPathfinding.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		779D30FD56C063D40CB18463 /* AreaScanGraphTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AreaScanGraphTests.swift; sourceTree = "<group>"; };
+		79CCA6F4DF9A2CF2B1CEDD29 /* IndoorPathfinding.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = IndoorPathfinding.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7A0FC01CF46590748018086F /* ScanMetadataDatabaseMigrationV7Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanMetadataDatabaseMigrationV7Tests.swift; sourceTree = "<group>"; };
 		7C1F7B5B4FECECC28CEDCD9E /* AdminWorkspaceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminWorkspaceStore.swift; sourceTree = "<group>"; };
 		7C3F8EDF8B4273F9DA40A3A6 /* AdminShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminShellView.swift; sourceTree = "<group>"; };
@@ -303,6 +306,7 @@
 		A813C809787A6003F80A626C /* obj_loader.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = obj_loader.cpp; sourceTree = "<group>"; };
 		A8A319B7213778662D8D3BA0 /* circle.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = circle.cpp; sourceTree = "<group>"; };
 		A9E2CA7559F0595C6BFA1736 /* IMDFParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMDFParser.swift; sourceTree = "<group>"; };
+		AA15A490EB6862A645EA5C92 /* AdminPathfindingMigrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminPathfindingMigrationTests.swift; sourceTree = "<group>"; };
 		AB8F647FDE9D51C76389F014 /* BranchEdgeRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BranchEdgeRepository.swift; sourceTree = "<group>"; };
 		ABA56F14B689702A95EAC9F0 /* KeyframeRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyframeRepository.swift; sourceTree = "<group>"; };
 		AC425FAC09BCA34DA3C5F659 /* NavGraphModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavGraphModels.swift; sourceTree = "<group>"; };
@@ -334,6 +338,7 @@
 		D853D39B3C04FFC039FDEC8D /* VideoRecorderConsumer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoRecorderConsumer.swift; sourceTree = "<group>"; };
 		D8728856E7C0AD7A11F683A1 /* PoiPhotoRepositoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PoiPhotoRepositoryTests.swift; sourceTree = "<group>"; };
 		D8CD778A73734E11921FBD43 /* ScanArchiver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanArchiver.swift; sourceTree = "<group>"; };
+		DC3685C7844F35A20AD78CE6 /* MapEndpointMigrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapEndpointMigrationTests.swift; sourceTree = "<group>"; };
 		DC5095F0096D2173A06B9130 /* ExportProgressModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportProgressModelTests.swift; sourceTree = "<group>"; };
 		DD88078577FC57FF2DA4B8D6 /* quad_color.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = quad_color.cpp; sourceTree = "<group>"; };
 		DEA441363E8FEB22C5CC2956 /* point_cloud_drawable.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = point_cloud_drawable.cpp; sourceTree = "<group>"; };
@@ -350,6 +355,7 @@
 		ED0177E629D73461F321B345 /* AdminBuildingListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminBuildingListView.swift; sourceTree = "<group>"; };
 		EE4BE6A54E418B2A85983F88 /* StreamingPushService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamingPushService.swift; sourceTree = "<group>"; };
 		EEF2F43E6B62EF878D911F7B /* triangle.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = triangle.cpp; sourceTree = "<group>"; };
+		F172A8FED2DC7237EF648EEB /* LocalFloorRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalFloorRouter.swift; sourceTree = "<group>"; };
 		F2EAD428578C44D1EB9AFBFB /* texture.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = texture.cpp; sourceTree = "<group>"; };
 		F51CAD1F87C6500287E9E900 /* RtabmapDBReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RtabmapDBReader.swift; sourceTree = "<group>"; };
 		FA85C5F99A482DC385D64BAB /* scene.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = scene.h; sourceTree = "<group>"; };
@@ -465,14 +471,14 @@
 				94ACDEF7B0BA3D6B4233422C /* IndoorServerClientTests.swift */,
 				43522D8A5FBACE3FE889519B /* KeyframeCaptureThrottleRolloverTests.swift */,
 				9ABFD450453700F0A2436434 /* KeyframeCaptureThrottleTests.swift */,
+				DC3685C7844F35A20AD78CE6 /* MapEndpointMigrationTests.swift */,
 				E1473C617D2691ACF7007D1C /* MarkingStateCornerCloseTests.swift */,
 				71EBBBC22F898E9CC380C954 /* MarkingStateTests.swift */,
 				84ED21ACF82F6DCF362B82CD /* MarkRepositoryDeltaTests.swift */,
 				06C26E2C8D92D468FA5D46C9 /* MarkRepositoryV7Tests.swift */,
 				D8728856E7C0AD7A11F683A1 /* PoiPhotoRepositoryTests.swift */,
 				1B257036D82EAC143B92E6F0 /* PoseFileWriterTests.swift */,
-				1C53032BC09E45B49BC1779D /* MapEndpointMigrationTests.swift */,
-			502D538514DB45F1E176167C /* RouteRequestPayloadTests.swift */,
+				502D538514DB45F1E176167C /* RouteRequestPayloadTests.swift */,
 				2A3503C58E703FA20E0F5C07 /* ScanFileStoreChunkMetadataLinkTests.swift */,
 				8E9185366155DAE6D02D0061 /* ScanMetadataDatabaseMigrationV2Tests.swift */,
 				0E287250C8D92B18762A2D86 /* ScanMetadataDatabaseMigrationV3Tests.swift */,
@@ -613,7 +619,9 @@
 			isa = PBXGroup;
 			children = (
 				E0842F3351DF99A53FB9558C /* AdminCacheDatabaseTests.swift */,
+				AA15A490EB6862A645EA5C92 /* AdminPathfindingMigrationTests.swift */,
 				05C0C5B6ADAE69EDB595DBE5 /* AdminWorkspaceStoreTests.swift */,
+				779D30FD56C063D40CB18463 /* AreaScanGraphTests.swift */,
 				3041DC19B144001EA905DC38 /* IndoorServerV1ClientTests.swift */,
 			);
 			path = Admin;
@@ -767,6 +775,7 @@
 				52638F3D30555F8CD0C2C818 /* AdminFloorDetailView.swift */,
 				2EAD53611C0A5D3DDC19EEED /* AdminFloorGraphView.swift */,
 				4A26FE1E8669E467A32B29A0 /* AdminFloorListView.swift */,
+				F172A8FED2DC7237EF648EEB /* LocalFloorRouter.swift */,
 			);
 			path = Building;
 			sourceTree = "<group>";
@@ -924,7 +933,7 @@
 			mainGroup = 3C37AE670A82BD6489E1D1EA;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB" */,
+				A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
 				035FE36193140358C375BC01 /* XCRemoteSwiftPackageReference "ZIPFoundation" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -1013,6 +1022,7 @@
 				F85F68D6527C633B6466DEC7 /* KeyframeMeta.swift in Sources */,
 				29455F6740CDECF9119966E8 /* KeyframeRepository.swift in Sources */,
 				3059089FAEAB088002C91618 /* KeyframeSample.swift in Sources */,
+				FB90D1948D6ABDDEC63464C1 /* LocalFloorRouter.swift in Sources */,
 				FF0F6F505959DFED839C20AC /* ManifestWriter.swift in Sources */,
 				B81D3631BF1DFA73BCE8E0AC /* MarkARSceneOverlay.swift in Sources */,
 				59AD92194C854A19E6350415 /* MarkRepository.swift in Sources */,
@@ -1086,7 +1096,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				2300267CB7BCD0DB65085A0A /* AdminCacheDatabaseTests.swift in Sources */,
+				B841FC2AC800D25408970AE2 /* AdminPathfindingMigrationTests.swift in Sources */,
 				083B1DF105430D9D5C2DB295 /* AdminWorkspaceStoreTests.swift in Sources */,
+				AAFC4DCBFC17C97F045F09F7 /* AreaScanGraphTests.swift in Sources */,
 				2EFA51904FDBF00317DCEEE7 /* BranchEdgeRepositoryTests.swift in Sources */,
 				C9BF3157C8718FB50CF24A9C /* ChunkManifestTests.swift in Sources */,
 				6A6130DE73D0B19E5D7A9588 /* ChunkRolloverSchedulerTests.swift in Sources */,
@@ -1103,14 +1115,14 @@
 				C210B6D23C2936AB7EC75279 /* IndoorServerV1ClientTests.swift in Sources */,
 				D1B89BF546FD88B4398CDF34 /* KeyframeCaptureThrottleRolloverTests.swift in Sources */,
 				133D12161CB94DA373CF2FB9 /* KeyframeCaptureThrottleTests.swift in Sources */,
+				2C655B8625D119233A8F9242 /* MapEndpointMigrationTests.swift in Sources */,
 				B60F1D7A6B6B1BAB54DC45A0 /* MarkRepositoryDeltaTests.swift in Sources */,
 				7DDEE253B377AFAED080223E /* MarkRepositoryV7Tests.swift in Sources */,
 				3C937441B9C0DA95DF2C10DA /* MarkingStateCornerCloseTests.swift in Sources */,
 				EF8E98CA380D1E02F3896DD3 /* MarkingStateTests.swift in Sources */,
 				FE6C4CB65C43F8A1314CBBCC /* PoiPhotoRepositoryTests.swift in Sources */,
 				A31C6C1611BCEE81378CC477 /* PoseFileWriterTests.swift in Sources */,
-				69B29557467343E1BA18FB65 /* MapEndpointMigrationTests.swift in Sources */,
-			6F82FCD6F4DC4E2F35C8150C /* RouteRequestPayloadTests.swift in Sources */,
+				6F82FCD6F4DC4E2F35C8150C /* RouteRequestPayloadTests.swift in Sources */,
 				4D723AEA24F91449D7BD2DBD /* ScanFileStoreChunkMetadataLinkTests.swift in Sources */,
 				F64D413AEE66895A8F821651 /* ScanMetadataDatabaseMigrationV2Tests.swift in Sources */,
 				92C604E468A9177145D95F60 /* ScanMetadataDatabaseMigrationV3Tests.swift in Sources */,
@@ -1217,7 +1229,6 @@
 				CLANG_CXX_LIBRARY = "libc++";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				DEVELOPMENT_ASSET_PATHS = "\"IndoorPathfinding/Preview Content\"";
-				DEVELOPMENT_TEAM = RDTWAVXLC3;
 				"EXCLUDED_SOURCE_FILE_NAMES[sdk=iphonesimulator*]" = (
 					NativeWrapper.cpp,
 					RTABMapApp.cpp,
@@ -1362,7 +1373,9 @@
 					"-llibprotobuf",
 					"-lsqlite3",
 				);
-				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = "$(inherited)";
+				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = ac.koreatech.indoorpathfinding;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "Vendor/RTABMap/Bridge/IndoorPathfinding-Bridging-Header.h";
@@ -1503,7 +1516,6 @@
 				CLANG_CXX_LIBRARY = "libc++";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				DEVELOPMENT_ASSET_PATHS = "\"IndoorPathfinding/Preview Content\"";
-				DEVELOPMENT_TEAM = RDTWAVXLC3;
 				"EXCLUDED_SOURCE_FILE_NAMES[sdk=iphonesimulator*]" = (
 					NativeWrapper.cpp,
 					RTABMapApp.cpp,
@@ -1648,7 +1660,9 @@
 					"-llibprotobuf",
 					"-lsqlite3",
 				);
-				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = "$(inherited)";
+				"OTHER_LDFLAGS[sdk=iphonesimulator*]" = (
+					"$(inherited)",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = ac.koreatech.indoorpathfinding;
 				SDKROOT = iphoneos;
 				SWIFT_OBJC_BRIDGING_HEADER = "Vendor/RTABMap/Bridge/IndoorPathfinding-Bridging-Header.h";
@@ -1733,7 +1747,7 @@
 				minimumVersion = 0.9.19;
 			};
 		};
-		A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB" */ = {
+		A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/groue/GRDB.swift";
 			requirement = {
@@ -1746,7 +1760,7 @@
 /* Begin XCSwiftPackageProductDependency section */
 		0F5BFE6B2E1C6CBE2B7D3B30 /* GRDB */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB" */;
+			package = A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
 			productName = GRDB;
 		};
 		2DC72AD233964E4CCB906D1D /* ZIPFoundation */ = {
@@ -1756,7 +1770,7 @@
 		};
 		33128A89E61BFC3F9229DB6F /* GRDB */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB" */;
+			package = A52D3F4C5A92D855F9452467 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
 			productName = GRDB;
 		};
 		F2883010291F8E9E28DFB02D /* ZIPFoundation */ = {
