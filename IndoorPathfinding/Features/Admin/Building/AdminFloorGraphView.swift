@@ -761,8 +761,11 @@ struct AdminFloorGraphView: View {
             ?? dict["to"]?.asString
             ?? ""
 
-        if let fromNode = nodes.first(where: { $0.id.uuidString == fromIdStr }),
-           let toNode = nodes.first(where: { $0.id.uuidString == toIdStr }) {
+        let fromUUID = UUID(uuidString: fromIdStr)
+        let toUUID = UUID(uuidString: toIdStr)
+        if let fromUUID, let toUUID,
+           let fromNode = nodes.first(where: { $0.id == fromUUID }),
+           let toNode = nodes.first(where: { $0.id == toUUID }) {
             return GraphEdge(
                 id: UUID(),
                 fromX: fromNode.x, fromY: fromNode.y,
