@@ -669,29 +669,56 @@ struct AdminFloorGraphView: View {
             let allNodes: [GraphNode] = mapResp.nodes.compactMap { parseGraphNode(from: $0) }
             let allEdges: [GraphEdge] = mapResp.edges.compactMap { parseGraphEdge(from: $0, nodes: allNodes) }
 
-            // POI derive: node.category == "poi"
-            let filteredPOIs: [GraphPOI] = allNodes.compactMap { node in
-                guard node.category?.lowercased() == "poi" else { return nil }
-                return GraphPOI(
-                    id: node.id,
-                    routeNodeId: node.id,  // /map에서는 nodeId == routeNodeId
-                    name: node.label ?? "POI",
-                    x: node.x, y: node.y,
-                    category: "poi"
-                )
+            // destinations 별 필드 우선. 없으면 node.category=="poi" fallback.
+            let filteredPOIs: [GraphPOI]
+            if let destinations = mapResp.destinations, !destinations.isEmpty {
+                filteredPOIs = destinations.map { d in
+                    GraphPOI(
+                        id: d.id,
+                        routeNodeId: d.routeNodeId,
+                        name: d.name ?? d.label ?? "POI",
+                        x: d.x, y: d.y,
+                        category: d.category ?? "poi"
+                    )
+                }
+            } else {
+                filteredPOIs = allNodes.compactMap { node in
+                    guard node.category?.lowercased() == "poi" else { return nil }
+                    return GraphPOI(
+                        id: node.id,
+                        routeNodeId: node.id,
+                        name: node.label ?? "POI",
+                        x: node.x, y: node.y,
+                        category: "poi"
+                    )
+                }
             }
 
-            // Passage derive: node.connector != nil
-            let filteredPassages: [GraphPassage] = allNodes.compactMap { node in
-                guard let conn = node.connector else { return nil }
-                return GraphPassage(
-                    id: node.id,
-                    routeNodeId: node.id,
-                    connectorType: conn.type,
-                    connectorKey: conn.key,
-                    name: node.label,
-                    x: node.x, y: node.y
-                )
+            // connectors 별 필드 우선. 없으면 node.connector fallback.
+            let filteredPassages: [GraphPassage]
+            if let connectors = mapResp.connectors, !connectors.isEmpty {
+                filteredPassages = connectors.map { c in
+                    GraphPassage(
+                        id: c.connectorId,
+                        routeNodeId: c.routeNodeId,
+                        connectorType: c.type,
+                        connectorKey: c.key,
+                        name: c.name,
+                        x: c.x, y: c.y
+                    )
+                }
+            } else {
+                filteredPassages = allNodes.compactMap { node in
+                    guard let conn = node.connector else { return nil }
+                    return GraphPassage(
+                        id: node.id,
+                        routeNodeId: node.id,
+                        connectorType: conn.type,
+                        connectorKey: conn.key,
+                        name: node.label,
+                        x: node.x, y: node.y
+                    )
+                }
             }
 
             // Bounds

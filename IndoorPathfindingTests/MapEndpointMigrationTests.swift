@@ -174,6 +174,155 @@ struct MapEndpointMigrationTests {
         #expect(result.isEmpty)
     }
 
+    // MARK: - destinations/connectors 별 필드 디코딩
+
+    @Test("V1FloorMap decodes destinations and connectors fields")
+    func floorMapDestinationsConnectors() throws {
+        let json = """
+        {
+          "floorId": "11111111-1111-1111-1111-111111111111",
+          "buildingId": "22222222-2222-2222-2222-222222222222",
+          "floorLevel": 1,
+          "nodes": [],
+          "edges": [],
+          "destinations": [
+            {
+              "id": "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA",
+              "routeNodeId": "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB",
+              "name": "편의점",
+              "label": "CVS",
+              "category": "store",
+              "x": 1.0,
+              "y": 2.0,
+              "z": 0.0
+            }
+          ],
+          "connectors": [
+            {
+              "connectorId": "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC",
+              "type": "elevator",
+              "key": "EV-A",
+              "name": "EV-A",
+              "routeNodeId": "DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDDDDDD",
+              "x": 3.0,
+              "y": 4.0,
+              "z": 0.0,
+              "stops": [
+                {
+                  "floorId": "11111111-1111-1111-1111-111111111111",
+                  "floorLevel": 1,
+                  "areaId": "EEEEEEEE-EEEE-EEEE-EEEE-EEEEEEEEEEEE",
+                  "areaLabel": "Area 1",
+                  "routeNodeId": "DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDDDDDD",
+                  "x": 3.0,
+                  "y": 4.0,
+                  "z": 0.0
+                }
+              ]
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(V1FloorMap.self, from: json)
+
+        let dest = try #require(decoded.destinations?.first)
+        #expect(dest.id == UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!)
+        #expect(dest.routeNodeId == UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!)
+        #expect(dest.name == "편의점")
+        #expect(dest.category == "store")
+        #expect(dest.x == 1.0)
+        #expect(dest.y == 2.0)
+
+        let conn = try #require(decoded.connectors?.first)
+        #expect(conn.connectorId == UUID(uuidString: "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC")!)
+        #expect(conn.type == "elevator")
+        #expect(conn.key == "EV-A")
+        #expect(conn.routeNodeId == UUID(uuidString: "DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDDDDDD")!)
+        #expect(conn.x == 3.0)
+        #expect(conn.stops?.count == 1)
+
+        let stop = try #require(conn.stops?.first)
+        #expect(stop.floorLevel == 1)
+        #expect(stop.areaLabel == "Area 1")
+    }
+
+    @Test("V1FloorMap destinations nil when field absent")
+    func floorMapDestinationsNilWhenAbsent() throws {
+        let json = """
+        {
+          "floorId": "11111111-1111-1111-1111-111111111111",
+          "buildingId": "22222222-2222-2222-2222-222222222222",
+          "floorLevel": 1,
+          "nodes": [],
+          "edges": []
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(V1FloorMap.self, from: json)
+        #expect(decoded.destinations == nil)
+        #expect(decoded.connectors == nil)
+    }
+
+    @Test("destinations map to GraphPOI with name priority over label")
+    func destinationToGraphPOI() {
+        let dest = V1MapDestination(
+            id: UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!,
+            routeNodeId: UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!,
+            name: "카페", label: "CAFE", category: "food",
+            x: 5.0, y: 6.0, z: 0.0
+        )
+        let poi = GraphPOI(
+            id: dest.id,
+            routeNodeId: dest.routeNodeId,
+            name: dest.name ?? dest.label ?? "POI",
+            x: dest.x, y: dest.y,
+            category: dest.category ?? "poi"
+        )
+        #expect(poi.name == "카페")
+        #expect(poi.routeNodeId == UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!)
+        #expect(poi.category == "food")
+        #expect(poi.x == 5.0)
+    }
+
+    @Test("destination uses label when name is nil")
+    func destinationUsesLabel() {
+        let dest = V1MapDestination(
+            id: UUID(), routeNodeId: nil,
+            name: nil, label: "화장실", category: nil,
+            x: 1.0, y: 1.0, z: 0.0
+        )
+        let name = dest.name ?? dest.label ?? "POI"
+        #expect(name == "화장실")
+    }
+
+    @Test("connectors map to GraphPassage")
+    func connectorToGraphPassage() {
+        let conn = V1MapConnector(
+            connectorId: UUID(uuidString: "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC")!,
+            type: "elevator",
+            key: "EV-A",
+            name: "EV-A",
+            routeNodeId: UUID(uuidString: "DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDDDDDD")!,
+            x: 3.0, y: 4.0, z: 0.0,
+            stops: nil
+        )
+        let passage = GraphPassage(
+            id: conn.connectorId,
+            routeNodeId: conn.routeNodeId,
+            connectorType: conn.type,
+            connectorKey: conn.key,
+            name: conn.name,
+            x: conn.x, y: conn.y
+        )
+        #expect(passage.id == UUID(uuidString: "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC")!)
+        #expect(passage.routeNodeId == UUID(uuidString: "DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDDDDDD")!)
+        #expect(passage.connectorType == "elevator")
+        #expect(passage.connectorKey == "EV-A")
+        #expect(passage.name == "EV-A")
+        #expect(passage.x == 3.0)
+    }
+
     // MARK: - node.connector derive (unit)
 
     @Test("NodeConnector is extracted from connector dict")

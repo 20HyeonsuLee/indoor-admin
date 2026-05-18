@@ -83,7 +83,45 @@ struct V1FloorMap: Decodable {
     /// flat node 배열 (admin parse용)
     let nodes: [[String: V1AnyValue]]
     let edges: [[String: V1AnyValue]]
+    /// 별도 분리된 destination(POI) 목록. 서버가 nodes에서 분리해 반환.
+    let destinations: [V1MapDestination]?
+    /// 별도 분리된 connector(passage) 목록. 서버가 nodes에서 분리해 반환.
+    let connectors: [V1MapConnector]?
     let etag: String?
+}
+
+struct V1MapDestination: Decodable {
+    let id: UUID
+    let routeNodeId: UUID?
+    let name: String?
+    let label: String?
+    let category: String?
+    let x: Double
+    let y: Double
+    let z: Double
+}
+
+struct V1MapConnector: Decodable {
+    let connectorId: UUID
+    let type: String
+    let key: String
+    let name: String?
+    let routeNodeId: UUID?
+    let x: Double
+    let y: Double
+    let z: Double
+    let stops: [V1MapConnectorStop]?
+}
+
+struct V1MapConnectorStop: Decodable {
+    let floorId: UUID
+    let floorLevel: Int
+    let areaId: UUID
+    let areaLabel: String?
+    let routeNodeId: UUID?
+    let x: Double
+    let y: Double
+    let z: Double
 }
 
 // Sprint 78 B-1: floor route response DTO
