@@ -68,6 +68,24 @@ struct V1FloorPath: Decodable {
     let bounds: [String: Double]?
 }
 
+/// /floors/{id}/map 단일 엔드포인트 응답 (FloorMapResponse)
+struct V1FloorMap: Decodable {
+    let floorId: UUID
+    let buildingId: UUID
+    let scanId: UUID?
+    let floorLevel: Int
+    let floorName: String?
+    let buildJobId: UUID?
+    let coordinateSystem: [String: V1AnyValue]?
+    let bounds: [String: Double]?
+    /// GeoJSON FeatureCollection (free-form). nil 또는 features:[] 빈 배열도 안전 처리.
+    let polygon: [String: V1AnyValue]?
+    /// flat node 배열 (admin parse용)
+    let nodes: [[String: V1AnyValue]]
+    let edges: [[String: V1AnyValue]]
+    let etag: String?
+}
+
 // Sprint 78 B-1: floor route response DTO
 struct FloorRouteResponse: Decodable {
     let floorId: String
@@ -431,6 +449,15 @@ struct IndoorServerV1Client {
 
     func listPassages(buildingId: UUID) async throws -> [V1Passage] {
         try await get(url: v1.appendingPathComponent("buildings/\(buildingId.uuidString)/passages"))
+    }
+
+    /// /floors/{id}/map 단일 호출. nodes/edges/bounds/polygon을 한 번에 반환.
+    func floorMap(floorId: UUID, areaId: UUID? = nil) async throws -> V1FloorMap {
+        var c = URLComponents(url: v1.appendingPathComponent("floors/\(floorId.uuidString)/map"), resolvingAgainstBaseURL: false)!
+        if let areaId {
+            c.queryItems = [URLQueryItem(name: "areaId", value: areaId.uuidString)]
+        }
+        return try await get(url: c.url!)
     }
 
     // Sprint 78 B-1: floor route
